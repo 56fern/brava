@@ -1,0 +1,12 @@
+node_modules/
+dist/
+release/
+.env
+.release-webhook-state.json
+*.log
+apps/api/data/
+release-staging/
+apps/desktop/release-*/
+apps/desktop/out/
+work/
+outputs/

@@ -1,0 +1,23 @@
+{
+  "version": "0.51.0",
+  "title": "New Update Available",
+  "sections": [
+    {
+      "name": "Product monitoring",
+      "items": [
+        "Exact Pokémon Center SKUs are now checked against the official search result in an isolated hidden monitor window.",
+        "Tasks no longer depend on the empty central source list to verify an explicitly entered SKU.",
+        "Official SKU checks are deduplicated across tasks and repeat every 30 seconds while a task remains active."
+      ]
+    },
+    {
+      "name": "Status reliability",
+      "items": [
+        "A verified in-stock exact SKU advances from Monitoring to Found even when Auto-apply match is disabled.",
+        "Out-of-stock products remain Monitoring with an unavailable message, and unmatched SKUs show a clear retry message.",
+        "The matched product name and official product URL are written back to the task row."
+      ]
+    }
+  ],
+  "instructions": "Open Brava, go to Settings, check for updates, then select Update & restart."
+}

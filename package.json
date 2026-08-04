@@ -1,0 +1,18 @@
+{
+  "name": "brava-desktop-suite",
+  "private": true,
+  "version": "0.51.0",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev": "concurrently -n api,desktop -c blue,magenta \"pnpm --filter @brava/api dev\" \"pnpm --filter @brava/desktop dev\"",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "license:create": "pnpm --filter @brava/api license:create",
+    "license:reset-devices": "pnpm --filter @brava/api license:reset-devices",
+    "monitor:signal": "pnpm --filter @brava/api monitor:signal"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
