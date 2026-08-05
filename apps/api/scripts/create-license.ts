@@ -1,5 +1,9 @@
-import { createApp } from "../src/app.js";
-import { config } from "../src/config.js";
+import crypto from "node:crypto";
+import { assertProductionSecrets, config } from "../src/config.js";
+import { generateLicenseKey, hashLicenseKey } from "../src/crypto.js";
+import { closeDatabasePool, getDatabasePool } from "../src/database.js";
+import { runBravaMigrations } from "../src/migrations.js";
+import { createLicenseStore } from "../src/repository-factory.js";
 
 const label = process.argv[2] ?? "Development license";
 const deviceArgument = (process.argv[3] ?? "1").toLowerCase();
@@ -8,15 +12,29 @@ const maxDevices = owner ? null : Number(deviceArgument);
 if (maxDevices !== null && (!Number.isInteger(maxDevices) || maxDevices < 1 || maxDevices > 10)) {
   throw new Error("Device limit must be an integer from 1 to 10, or use 'unlimited' for an owner license.");
 }
-const server = createApp().listen(0, "127.0.0.1", async () => {
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Could not start local API");
-  const response = await fetch(`http://127.0.0.1:${address.port}/v1/admin/licenses`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${config.adminToken}` },
-    body: JSON.stringify({ label, role: owner ? "owner" : "user", maxDevices, expiresAt: null }),
-  });
-  const result = await response.json();
-  console.log(JSON.stringify(result, null, 2));
-  server.close();
-});
+
+assertProductionSecrets();
+try {
+  if (config.licenseStorage === "postgres") await runBravaMigrations(getDatabasePool());
+  const repository = createLicenseStore();
+  try {
+    const key = generateLicenseKey();
+    const license = {
+      id: crypto.randomUUID(),
+      keyHash: hashLicenseKey(key),
+      label,
+      role: owner ? "owner" as const : "user" as const,
+      status: "active" as const,
+      maxDevices,
+      expiresAt: null,
+      createdAt: new Date().toISOString(),
+      devices: [],
+    };
+    await repository.createLicense(license);
+    console.log(JSON.stringify({ key, license: { ...license, keyHash: undefined } }, null, 2));
+  } finally {
+    await repository.close();
+  }
+} finally {
+  if (config.licenseStorage === "postgres") await closeDatabasePool();
+}

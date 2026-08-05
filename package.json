@@ -2,13 +2,18 @@
   "name": "brava-desktop-suite",
   "private": true,
   "version": "0.51.0",
+  "engines": {
+    "node": ">=22 <25"
+  },
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "dev": "concurrently -n api,desktop -c blue,magenta \"pnpm --filter @brava/api dev\" \"pnpm --filter @brava/desktop dev\"",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
+    "db:migrate": "pnpm --filter @brava/api db:migrate",
     "license:create": "pnpm --filter @brava/api license:create",
+    "license:import-json": "pnpm --filter @brava/api license:import-json",
     "license:reset-devices": "pnpm --filter @brava/api license:reset-devices",
     "monitor:signal": "pnpm --filter @brava/api monitor:signal"
   },

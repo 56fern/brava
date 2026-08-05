@@ -1,7 +1,10 @@
 {
   "name": "@brava/api",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
+  "engines": {
+    "node": ">=22 <25"
+  },
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -9,23 +12,30 @@
     "start": "node dist/src/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "db:migrate": "tsx scripts/migrate-database.ts",
     "license:create": "tsx scripts/create-license.ts",
+    "license:import-json": "tsx scripts/import-json-licenses.ts",
     "license:reset-devices": "tsx scripts/reset-license-devices.ts",
     "monitor:signal": "tsx scripts/publish-product-signal.ts"
   },
   "dependencies": {
+    "@polar-sh/better-auth": "^1.8.4",
+    "@polar-sh/sdk": "^0.49.0",
+    "better-auth": "^1.6.25",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
+    "pg": "^8.22.0",
     "zod": "^4.0.17"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/node": "^24.3.0",
-    "supertest": "^7.1.4",
+    "@types/pg": "^8.20.3",
     "@types/supertest": "^6.0.3",
+    "supertest": "^7.1.4",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

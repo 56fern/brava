@@ -19,6 +19,23 @@ export type License = {
 
 export type Database = { licenses: License[] };
 
+export type LicenseActivationInput = {
+  keyHash: string;
+  deviceId: string;
+  deviceName: string;
+  now: Date;
+};
+
+export type LicenseActivationResult =
+  | { ok: true; licenseId: string; label: string; expiresAt: string | null }
+  | { ok: false; error: "invalid_license" | "expired_license" | "device_limit" };
+
+export type DeviceResetResult = {
+  removed: number;
+  licenseId: string;
+  label: string;
+};
+
 export type ProductSignal = {
   sequence: number;
   id: string;
