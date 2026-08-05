@@ -1,30 +1,16 @@
 {
   "version": "0.4.0",
-  "title": "New Backend Update",
+  "title": "Brava Update",
   "sections": [
     {
-      "name": "Accounts and subscriptions",
+      "name": "What's new",
       "items": [
-        "Added Better Auth account endpoints backed by PostgreSQL.",
-        "Added Polar checkout, customer portal, and signed subscription webhook support.",
-        "Subscription changes now reconcile Brava access without affecting owner or admin licenses."
-      ]
-    },
-    {
-      "name": "Persistent licensing",
-      "items": [
-        "Added PostgreSQL storage for license keys and device activations.",
-        "Added safe startup migrations and an optional guarded legacy JSON license import.",
-        "Device activation limits are enforced atomically by the database."
-      ]
-    },
-    {
-      "name": "Deployment reliability",
-      "items": [
-        "Health checks now report storage, database, authentication, and billing readiness.",
-        "The API validates production secrets and completes migrations before accepting traffic."
+        "Brava's account and subscription system is now connected.",
+        "Your Brava access will update automatically when your subscription changes.",
+        "License keys and connected devices are now saved more reliably.",
+        "Login and license checks are more stable."
       ]
     }
   ],
-  "instructions": "This backend update deploys automatically. No desktop download is required."
+  "instructions": "Nothing. This update was installed automatically. No download or restart is needed."
 }
