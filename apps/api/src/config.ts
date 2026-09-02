@@ -7,6 +7,13 @@ const developmentDefaults = {
   adminToken: "development-admin-token-change-me",
 };
 
+const workingDirectory = process.cwd();
+const serviceWorkingDirectory = path.basename(workingDirectory).toLowerCase() === "api"
+  && path.basename(path.dirname(workingDirectory)).toLowerCase() === "apps";
+const defaultUpdateDir = serviceWorkingDirectory
+  ? path.resolve(workingDirectory, "public/updates")
+  : path.resolve(workingDirectory, "apps/api/public/updates");
+
 export const config = {
   port: Number(process.env.PORT ?? 4310),
   host: process.env.HOST ?? "127.0.0.1",
@@ -18,7 +25,7 @@ export const config = {
   licenseStorage: process.env.LICENSE_STORAGE === "postgres" ? "postgres" as const : "json" as const,
   importJsonLicenses: process.env.IMPORT_JSON_LICENSES === "true",
   databasePoolMax: Math.max(1, Math.min(20, Number(process.env.DATABASE_POOL_MAX ?? 10) || 10)),
-  updateDir: process.env.UPDATE_DIR ?? path.resolve(process.cwd(), "../desktop/release"),
+  updateDir: process.env.UPDATE_DIR ?? defaultUpdateDir,
   monitorSourceUrls: (process.env.MONITOR_SOURCE_URLS ?? "").split(",").map((value) => value.trim()).filter(Boolean),
   monitorIntervalMs: Math.max(15_000, Number(process.env.MONITOR_INTERVAL_SECONDS ?? 30) * 1_000),
   monitorRequestTimeoutMs: Math.max(2_000, Number(process.env.MONITOR_REQUEST_TIMEOUT_SECONDS ?? 10) * 1_000),

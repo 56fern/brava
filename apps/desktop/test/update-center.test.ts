@@ -8,6 +8,9 @@ describe("update center", () => {
 
     expect(updater).toContain("currentVersion = app.getVersion()");
     expect(updater).toContain("Update server is offline.");
+    expect(updater).toContain("No published update is available yet.");
+    expect(updater).toContain("Could not check for updates. Try again later.");
+    expect(updater).not.toContain("`Could not check for updates: ${detail}`");
     expect(app).toContain("Installed v{update.currentVersion}");
     expect(app).toContain("{update.message}");
   });
@@ -21,7 +24,7 @@ describe("update center", () => {
     expect(publisher).toContain("sendReleaseWebhook");
     expect(publisher).toContain(".release-webhook-state.json");
     expect(publisher.indexOf("await sendReleaseWebhook({")).toBeLessThan(publisher.indexOf("renameSync(manifestTemporaryPath"));
-    expect(publisher).toContain("Brava-Setup-0.33.0.exe.blockmap");
-    expect(publisher).toContain("can then patch or fall back to the complete newest installer in one jump");
+    expect(publisher).toContain("complete newest installer");
+    expect(publisher).toContain("readdirSync(destination)");
   });
 });

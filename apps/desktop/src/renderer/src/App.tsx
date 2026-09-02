@@ -10,8 +10,8 @@ import { getVirtualRange } from "../../shared/virtual-window";
 import { harvesterProxyLabel, parseHarvesterProxy } from "../../shared/harvester-proxy";
 import bravaLogoUrl from "./assets/brava-logo-v2.png";
 import bravaLogoLightUrl from "./assets/brava-logo-light.png";
+import { API_URL } from "./config.js";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:4310";
 const ORDER_STATUS_URL = "https://www.pokemoncenter.com/orders";
 const emptyData: AppData = { profileGroups: [], proxyGroups: [], profiles: [], proxies: [], taskGroups: [], tasks: [], harvesters: [] };
 type Page = "dashboard" | "tasks" | "profiles" | "proxies" | "challenges" | "settings";

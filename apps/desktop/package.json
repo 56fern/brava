@@ -1,7 +1,7 @@
 {
   "name": "@brava/desktop",
   "private": true,
-  "version": "0.51.0",
+  "version": "0.52.0",
   "description": "Brava product monitor and checkout companion",
   "main": "dist/main/index.js",
   "type": "module",
@@ -12,6 +12,7 @@
     "verify:bundle": "node scripts/verify-main-bundle.mjs",
     "smoke:launch": "node scripts/smoke-launch.mjs",
     "update:publish-local": "node scripts/publish-update-feed.mjs release-staging release",
+    "update:publish-live": "node scripts/publish-update-feed.mjs release-staging ../api/public/updates",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },
@@ -40,6 +41,6 @@
     "files": ["dist/**/*", "build/icon-large-v3.png", "build/webhook-avatar.png", "package.json"],
     "win": { "target": "nsis", "icon": "build/icon-large-v3.ico", "artifactName": "Brava-Setup-${version}.${ext}" },
     "nsis": { "guid": "81169a3c-9121-528c-b758-c234fcbfbc33", "oneClick": false, "allowToChangeInstallationDirectory": true, "uninstallDisplayName": "Brava" },
-    "publish": [{ "provider": "generic", "url": "http://127.0.0.1:4310/updates" }]
+    "publish": [{ "provider": "generic", "url": "https://api.bravabots.com/updates" }]
   }
 }

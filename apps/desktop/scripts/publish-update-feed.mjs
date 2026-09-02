@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sendReleaseWebhook } from "./release-webhook.mjs";
@@ -56,12 +56,6 @@ if (existsSync(liveManifestPath)) {
   if (compareVersions(version, liveVersion) <= 0) throw new Error(`Refusing to publish ${version}; the live version is already ${liveVersion}.`);
 }
 
-// Keep the oldest supported differential source available. Electron Updater
-// can then patch or fall back to the complete newest installer in one jump.
-for (const file of ["Brava-Setup-0.33.0.exe", "Brava-Setup-0.33.0.exe.blockmap"]) {
-  if (!existsSync(join(destination, file))) throw new Error(`Release blocked: missing 0.33 upgrade source ${file}.`);
-}
-
 const artifactFiles = [installerName, `${installerName}.blockmap`];
 const files = ["latest.yml", ...artifactFiles];
 for (const file of files) {
@@ -95,6 +89,15 @@ if (!webhookUrl) {
 mkdirSync(destination, { recursive: true });
 for (const file of artifactFiles) {
   copyFileSync(join(source, file), join(destination, basename(file)));
+}
+
+// Clients several versions behind can always fall back to downloading the
+// complete newest installer. Only the current release artifacts need to be
+// hosted, which keeps the production feed small and unambiguous.
+for (const file of readdirSync(destination)) {
+  if (/^Brava-Setup-.*\.(?:exe|exe\.blockmap)$/.test(file) && !artifactFiles.includes(file)) {
+    rmSync(join(destination, file), { force: true });
+  }
 }
 
 // The manifest is the public release switch. Publish it only after the

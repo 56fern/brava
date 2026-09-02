@@ -2,7 +2,7 @@ import { app, type BrowserWindow } from "electron";
 import electronUpdater from "electron-updater";
 import type { UpdateState } from "../shared/types.js";
 
-const defaultFeed = "http://127.0.0.1:4310/updates";
+const defaultFeed = "https://api.bravabots.com/updates";
 const { autoUpdater } = electronUpdater;
 
 export class UpdateController {
@@ -41,8 +41,9 @@ export class UpdateController {
 
   private errorMessage(error: unknown): string {
     const detail = error instanceof Error ? error.message : "Unknown error";
+    if (/\b404\b|latest\.yml.*not found|Cannot find latest/i.test(detail)) return "No published update is available yet.";
     if (/ECONNREFUSED|ERR_CONNECTION_REFUSED|Cannot download/i.test(detail)) return "Update server is offline.";
-    return `Could not check for updates: ${detail}`;
+    return "Could not check for updates. Try again later.";
   }
 
   private set(state: Omit<UpdateState, "currentVersion">): UpdateState {

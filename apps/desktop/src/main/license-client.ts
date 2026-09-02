@@ -13,12 +13,17 @@ export function serverEndpoint(apiUrl: string, path: string): string {
 }
 
 export async function activate(store: AppStore, key: string, apiUrl: string): Promise<LicenseSession> {
-  const response = await fetch(serverEndpoint(apiUrl, "v1/licenses/activate"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ key, deviceId: await store.getDeviceId(), deviceName: hostname() }),
-  });
-  const result = await response.json() as { token?: string; license?: LicenseSession; error?: string };
+  let response: Response;
+  try {
+    response = await fetch(serverEndpoint(apiUrl, "v1/licenses/activate"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key, deviceId: await store.getDeviceId(), deviceName: hostname() }),
+    });
+  } catch {
+    throw new Error("Could not reach Brava's license server. Check your internet connection and try again.");
+  }
+  const result = await response.json().catch(() => ({})) as { token?: string; license?: LicenseSession; error?: string };
   if (!response.ok || !result.token || !result.license) {
     const messages: Record<string, string> = {
       device_limit: "This key is already active on its allowed number of devices. Deactivate the old device or ask the license administrator to reset it.",
