@@ -8,6 +8,7 @@ export type TaskBatchInput = {
   batchQuantity: number;
   cartQuantity: number;
   autoApplyMonitorSignal: boolean;
+  autoCheckout: boolean;
   waitForQueue: boolean;
   loopProfiles: boolean;
 };
@@ -30,6 +31,7 @@ export function createTaskBatch(input: TaskBatchInput, createId: () => string = 
     usePlaceholder: !isUrl && productInput.toUpperCase() === "PLACEHOLDER",
     monitorKeywords: productInput,
     autoApplyMonitorSignal: input.autoApplyMonitorSignal,
+    autoCheckout: input.autoCheckout,
     variant: "",
     quantity: cartQuantity,
     effectiveQuantity: cartQuantity,

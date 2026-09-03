@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { AppStore } from "./store.js";
 import { TaskRunner } from "./task-runner.js";
 import { HarvesterManager } from "./harvester-manager.js";
+import { CheckoutAutomation } from "./checkout-automation.js";
 import { ChallengeBroker } from "./challenge-broker.js";
 import { activate, deactivate, heartbeat, resume } from "./license-client.js";
 import { UpdateController } from "./updater.js";
@@ -88,11 +89,13 @@ if (!hasSingleInstanceLock) {
   const harvesters = new HarvesterManager(store, () => mainWindow);
   const challenges = new ChallengeBroker(store, () => mainWindow, harvesters, {
     testMode: !app.isPackaged && process.env.BRAVA_CHALLENGE_TEST_MODE === "1",
+    checkoutHandoff: (taskId, harvesterId) => void runner.reportCartAttempt(taskId, harvesterId).catch(() => undefined),
   });
   runner.setChallengeHandlers({
     request: (taskId, challengeUrl) => challenges.request(taskId, 0, challengeUrl),
     cancel: (taskId) => challenges.cancelTask(taskId),
   });
+  runner.setCheckoutHandlers({ run: (task, profile, harvesterId) => harvesters.runCheckout(harvesterId, task, profile) });
   harvesters.setLifecycleHandlers({
     onAvailable: () => challenges.dispatch(),
     onClosed: (harvesterId, redistribute) => challenges.releaseHarvester(harvesterId, redistribute),

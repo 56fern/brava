@@ -47,11 +47,19 @@ describe("profile CSV import", () => {
       region: "NY",
       postalCode: "10001",
       country: "US",
-      payment: { brand: "Visa", last4: "4242", expiryMonth: "08", expiryYear: "2029", billingSameAsShipping: false },
+      payment: {
+        brand: "Visa",
+        number: "4242424242424242",
+        last4: "4242",
+        expiryMonth: "08",
+        expiryYear: "2029",
+        cvv: "123",
+        billingSameAsShipping: false,
+      },
       billing: { address1: "2 Billing Rd", city: "Brooklyn", country: "US" },
     });
-    expect(JSON.stringify(profiles[0])).not.toContain("4242424242424242");
-    expect(JSON.stringify(profiles[0])).not.toContain('"123"');
+    expect(profiles[0]?.payment?.number).toBe("4242424242424242");
+    expect(profiles[0]?.payment?.cvv).toBe("123");
   });
 
   it("uses shipping as billing when billing columns are blank", () => {

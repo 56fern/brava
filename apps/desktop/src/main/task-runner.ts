@@ -1,6 +1,7 @@
 import type { BrowserWindow } from "electron";
 import type { AppStore } from "./store.js";
-import type { ProductSignal, Task, TaskStatus } from "../shared/types.js";
+import type { CheckoutOutcome } from "./checkout-automation.js";
+import type { ProductSignal, Profile, Task, TaskStatus } from "../shared/types.js";
 import { notifyTask } from "./webhook-notifier.js";
 import { publishPublicCheckout } from "./public-checkout-client.js";
 import { SharedScheduler, type SchedulerStats } from "./shared-scheduler.js";
@@ -53,6 +54,7 @@ export class TaskRunner {
     request: (taskId: string, challengeUrl: string) => Promise<void>;
     cancel: (taskId: string) => Promise<void>;
   } | undefined;
+  private checkoutHandlers: { run: (task: Task, profile: Profile, harvesterId: string) => Promise<CheckoutOutcome> } | undefined;
   private productProbe: ((sku: string) => Promise<ProductSignal | null>) | undefined;
 
   constructor(
@@ -255,16 +257,22 @@ export class TaskRunner {
     if (resumeStatus === "queued") this.scheduleQueueRefresh(id, queueCheckInterval(current));
   }
 
-  async complete(id: string): Promise<void> {
+  async complete(id: string, outcome?: { orderNumber?: string; amount?: number; message?: string }): Promise<void> {
     this.clear(id);
     await this.challengeHandlers?.cancel(id);
-    const task = await this.update(id, "completed", "Checkout confirmed by user", { challengeStatus: undefined, challengeUrl: undefined, assignedHarvesterId: undefined });
+    const task = await this.update(id, "completed", outcome?.message ?? "Checkout confirmed by user", {
+      challengeStatus: undefined,
+      challengeUrl: undefined,
+      assignedHarvesterId: undefined,
+      ...(outcome?.orderNumber ? { orderNumber: outcome.orderNumber } : {}),
+      ...(outcome?.amount != null ? { checkoutAmount: outcome.amount } : {}),
+    });
     if (task) {
       void notifyTask(this.store, task, "success").catch(() => undefined);
       void publishPublicCheckout(task).catch(() => undefined);
     }
   }
-  async decline(id: string): Promise<void> {
+  async decline(id: string, reason?: string): Promise<void> {
     this.clear(id);
     await this.challengeHandlers?.cancel(id);
     const data = await this.store.load();
@@ -272,9 +280,13 @@ export class TaskRunner {
     const loopProfiles = current?.loopProfiles ?? current?.offerProfileFallback ?? false;
     const currentIndex = current ? data.profiles.findIndex((profile) => profile.id === current.profileId) : -1;
     const nextProfile = loopProfiles && data.profiles.length > 1 ? data.profiles[(currentIndex + 1 + data.profiles.length) % data.profiles.length] : undefined;
-    const message = nextProfile
-      ? `Checkout was declined - ${nextProfile.name} selected for the next user-confirmed retry`
-      : "Checkout was declined - review the assigned profile before retrying";
+    const message = reason
+      ? nextProfile
+        ? `${reason} - ${nextProfile.name} selected for the next automatic retry`
+        : reason
+      : nextProfile
+        ? `Checkout was declined - ${nextProfile.name} selected for the next user-confirmed retry`
+        : "Checkout was declined - review the assigned profile before retrying";
     const task = await this.update(id, "declined", message, { ...(nextProfile ? { profileId: nextProfile.id } : {}), challengeStatus: undefined, challengeUrl: undefined, assignedHarvesterId: undefined });
     if (task) void notifyTask(this.store, task, "decline").catch(() => undefined);
   }
@@ -330,7 +342,9 @@ export class TaskRunner {
           ? `Monitor matched ${signal.sku} - queue tracking continues`
           : `Monitor matched ${signal.sku} - product signal found`;
         await this.update(task.id, nextStatus, message, { name: signal.name, sku: signal.sku, productUrl: signal.productUrl, usePlaceholder: false, pendingMonitorSignal: undefined, ...cartQuantityPatch(task, signal.maxCartQuantity) });
-        if (task.status !== "queued") this.clear(task.id);
+        if (task.status === "queued") { this.clear(task.id); continue; }
+        this.clear(task.id);
+        await this.requestAutoCheckout(task.id, signal.productUrl);
       } else {
         await this.update(task.id, task.status, `Monitor match ready - ${signal.sku} ${signal.name}`, { pendingMonitorSignal: signal });
       }
@@ -346,7 +360,58 @@ export class TaskRunner {
     if (!refreshed) return;
     const nextStatus = refreshed.status === "queued" ? "queued" : "found";
     await this.update(id, nextStatus, `Applied verified monitor match ${signal.sku}`, { productUrl: signal.productUrl, pendingMonitorSignal: undefined, ...cartQuantityPatch(refreshed, signal.maxCartQuantity) });
-    if (nextStatus === "found") this.clear(id);
+    if (nextStatus !== "queued") {
+      this.clear(id);
+      await this.requestAutoCheckout(id, signal.productUrl);
+    }
+  }
+
+  /**
+   * Auto-checkout entry point: a found task with automation enabled and a live
+   * product URL hands off to the harvester/checkout pipeline instead of
+   * parking silently in the Found state.
+   */
+  async requestAutoCheckout(id: string, productUrl: string): Promise<void> {
+    if (!this.checkoutHandlers) return;
+    const task = await this.getTask(id);
+    if (!task || task.autoCheckout === false) return;
+    if (!productUrl) {
+      await this.update(id, task.status, "Automatic checkout needs a product URL - use Review to check out manually");
+      return;
+    }
+    if (!task.profileId) {
+      await this.update(id, task.status, "Automatic checkout needs a profile - assign one to this task or use Review");
+      return;
+    }
+    this.clear(id);
+    await this.update(id, "adding_to_cart", `${cartQuantityMessage(task)} · waiting for the harvester challenge to clear`, cartQuantityPatch(task, task.maxCartQuantity));
+    this.scheduler.schedule(`${id}:cart-result-timeout`, cartResultTimeoutMs, () => this.expireCartAttempt(id));
+    await this.challengeHandlers?.request(id, productUrl);
+  }
+
+  /** Runs the automatic checkout for a task already in adding_to_cart on the assigned harvester window. */
+  async beginAutoCheckout(id: string, harvesterId: string): Promise<void> {
+    if (!this.checkoutHandlers) return;
+    const task = await this.getTask(id);
+    if (!task || task.status !== "adding_to_cart" || task.autoCheckout === false) return;
+    let outcome: CheckoutOutcome;
+    try {
+      const profile = (await this.store.load()).profiles.find((item) => item.id === task.profileId);
+      if (!profile) throw new Error("the task has no assigned profile");
+      outcome = this.checkoutHandlers
+        ? await this.checkoutHandlers.run(task, profile, harvesterId)
+        : { status: "declined" as const, message: "No checkout automation is wired - use Review to check out manually" };
+    } catch (error) {
+      outcome = { status: "declined", message: `Automatic checkout failed - ${error instanceof Error ? error.message : "unknown error"}` };
+    }
+    const stillRunning = await this.getTask(id);
+    if (stillRunning && stillRunning.status !== "adding_to_cart") return;
+    if (outcome.status === "completed") await this.complete(id, outcome);
+    else await this.decline(id, outcome.message);
+  }
+
+  setCheckoutHandlers(handlers: { run: (task: Task, profile: Profile, harvesterId: string) => Promise<CheckoutOutcome> }): void {
+    this.checkoutHandlers = handlers;
   }
 
   async review(id: string, harvesterAvailable = true): Promise<void> {
@@ -391,15 +456,17 @@ export class TaskRunner {
     this.scheduler.cancelPrefix(`${id}:`);
   }
 
-  async reportCartAttempt(id: string): Promise<void> {
+  async reportCartAttempt(id: string, harvesterId?: string): Promise<void> {
     const task = await this.getTask(id);
     if (!task) throw new Error("Task not found");
-    if (!['found', 'monitoring', 'queued'].includes(task.status)) {
+    if (!["found", "monitoring", "queued", "awaiting_user"].includes(task.status)) {
       throw new Error(`A cart attempt cannot start while the task is ${task.status}.`);
     }
     this.clear(id);
+    const assignedHarvesterId = harvesterId ?? task.assignedHarvesterId ?? "";
     await this.update(id, "adding_to_cart", cartQuantityMessage(task), cartQuantityPatch(task, task.maxCartQuantity));
     this.scheduler.schedule(`${id}:cart-result-timeout`, cartResultTimeoutMs, () => this.expireCartAttempt(id));
+    await this.beginAutoCheckout(id, assignedHarvesterId);
   }
 
   private async expireCartAttempt(id: string): Promise<void> {

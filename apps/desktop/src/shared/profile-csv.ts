@@ -168,9 +168,11 @@ export function parseProfilesCsv(text: string, groupId: string, createId: () => 
         payment: {
           cardholderName: `${firstName} ${lastName}`,
           brand: cardBrand(cardNumber),
+          number: cardNumber,
           last4: cardNumber.slice(-4),
           expiryMonth,
           expiryYear,
+          cvv: securityCode,
           billingSameAsShipping,
         },
         billing,
