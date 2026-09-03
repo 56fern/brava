@@ -31,6 +31,7 @@ The central monitor consumes configured public product feeds or page metadata an
 - User-controlled device deactivation from Settings, which frees the license slot and clears the locally saved key
 - Masked license-key display with explicit reveal and secure copy controls in Settings
 - Encrypted Discord checkout and decline webhooks with success/failure embeds and explicit test controls
+- Fully automatic checkout: after the CAPTCHA clears, the assigned harvester window selects the variant, adds to cart, autofills the assigned profile's shipping/payment details, and places the order itself — tasks move to Checked out with the real order number, or Decline with the reason (new tasks default to Auto-checkout; manual Review stays as fallback)
 - Neutral Discord connection-test embeds for independently verifying each configured webhook
 - Validated backup import with replacement confirmation while preserving device license and webhook secrets
 - Compact two-column task builder with integrated mode, queue, profile, proxy, and profile-loop controls
@@ -106,7 +107,7 @@ pnpm --filter @brava/desktop package
 pnpm --filter @brava/desktop smoke:launch
 ```
 
-The installer candidate is written to `apps/desktop/release-staging/`; packaging never changes the live update feed. Packaging also rejects the incompatible named `autoUpdater` import and automatically runs the launch smoke test. That test starts the packaged executable with a clean profile, verifies the renderer loaded and the window became visible, waits for a post-launch crash, and then closes only that test process. Full card numbers and CVVs are intentionally never stored; payment entry remains on the official checkout page.
+The installer candidate is written to `apps/desktop/release-staging/`; packaging never changes the live update feed. Packaging also rejects the incompatible named `autoUpdater` import and automatically runs the launch smoke test. That test starts the packaged executable with a clean profile, verifies the renderer loaded and the window became visible, waits for a post-launch crash, and then closes only that test process. Profiles store the full card number and CVV (encrypted at rest via Electron `safeStorage`, masked in the UI); automatic checkout types them into the official checkout page only, and manual Review keeps payment entry manual.
 
 ## Automatic updates
 

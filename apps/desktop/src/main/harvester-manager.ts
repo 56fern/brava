@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppStore } from "./store.js";
-import type { Harvester, HarvesterStatus } from "../shared/types.js";
+import { CheckoutAutomation } from "./checkout-automation.js";
+import type { CheckoutOutcome } from "./checkout-automation.js";
+import type { Harvester, HarvesterStatus, Task } from "../shared/types.js";
+import { buildCheckoutFields } from "../shared/checkout-scripts.js";
 import { parseHarvesterProxy } from "../shared/harvester-proxy.js";
 
 const officialHosts = new Set(["pokemoncenter.com", "www.pokemoncenter.com"]);
@@ -86,7 +89,11 @@ export class HarvesterManager {
   private onClosed: ((id: string, redistribute: boolean) => void | Promise<void>) | undefined;
   private onSolved: ((id: string) => void | Promise<void>) | undefined;
 
-  constructor(private readonly store: AppStore, private readonly mainWindow: () => BrowserWindow | null) {}
+  constructor(
+    private readonly store: AppStore,
+    private readonly mainWindow: () => BrowserWindow | null,
+    private readonly checkout: CheckoutAutomation = new CheckoutAutomation(),
+  ) {}
 
   setLifecycleHandlers(handlers: {
     onAvailable?: (id: string) => void | Promise<void>;
@@ -344,6 +351,41 @@ export class HarvesterManager {
 
   async markSolved(id: string): Promise<void> {
     await this.incrementSolved(id);
+  }
+
+  /**
+   * Hands-free checkout: lift the CAPTCHA cocoon, make sure the window is on the
+   * product page, drive add-to-cart → autofill → place-order, then release the
+   * harvester. The window stays on the live page so a human can take over if the
+   * automation declines.
+   */
+  async runCheckout(id: string, task: Task, profile: Parameters<typeof buildCheckoutFields>[0]): Promise<CheckoutOutcome> {
+    const browser = this.windows.get(id);
+    if (!browser || browser.isDestroyed()) {
+      return { status: "declined", message: "The harvester window closed before checkout could start; restart the task to retry." };
+    }
+    this.clearSolveWatcher(id);
+    await this.clearChallengeCss(id, browser);
+    await this.update(id, "busy", "Automatic checkout running", { assignedTaskId: task.id });
+    try {
+      const currentUrl = browser.webContents.getURL();
+      const onProductPage = permitsChallengeNavigation(currentUrl) && currentUrl.includes("/product/");
+      if (!onProductPage) {
+        if (!permitsChallengeNavigation(task.productUrl)) throw new Error("the task has no official product URL to open");
+        await browser.webContents.loadURL(task.productUrl);
+        await browser.webContents.executeJavaScript("document.readyState === 'complete' || new Promise((resolve) => addEventListener('load', resolve, { once: true }))", true).catch(() => undefined);
+      }
+      const outcome = await this.checkout.run(task, profile, browser.webContents);
+      const assigned = this.assignedChallengeUrls.get(id);
+      await this.update(id, browser.isDestroyed() ? "closed" : "open", outcome.status === "completed" ? `Checkout complete · ${outcome.message}` : "Checkout paused · continue manually", { assignedRequestId: undefined, assignedTaskId: undefined });
+      if (assigned) this.assignedChallengeUrls.delete(id);
+      if (assigned) await this.showWaiting(id, browser);
+      return outcome;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Automatic checkout failed";
+      await this.update(id, browser.isDestroyed() ? "closed" : "open", `Checkout paused · ${message}`, { assignedRequestId: undefined, assignedTaskId: undefined });
+      return { status: "declined", message };
+    }
   }
 
   async openOnLaunch(): Promise<void> {

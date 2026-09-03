@@ -37,7 +37,10 @@ type BrokerOptions = {
   leaseMs?: number;
   testDelayMs?: number;
   now?: () => Date;
+  checkoutHandoff?: CheckoutHandoff;
 };
+
+export type CheckoutHandoff = (taskId: string, harvesterId: string) => void;
 
 const isActive = (request: ChallengeRequest) => request.status === "queued" || request.status === "assigned";
 const isOfficialChallengeUrl = (value: string | undefined): value is string => {
@@ -61,6 +64,8 @@ export class ChallengeBroker {
   private testTimer: NodeJS.Timeout | undefined;
   private testActiveId: string | undefined;
 
+  private checkoutHandoff: CheckoutHandoff | undefined;
+
   constructor(
     private readonly store: AppStore,
     private readonly window: () => BrowserWindow | null,
@@ -71,6 +76,18 @@ export class ChallengeBroker {
     this.leaseMs = options.leaseMs ?? 5 * 60_000;
     this.testDelayMs = options.testDelayMs ?? 350;
     this.now = options.now ?? (() => new Date());
+    this.checkoutHandoff = options.checkoutHandoff;
+  }
+
+  /** Wire the automatic checkout pipeline; without it solved challenges stay manual. */
+  setCheckoutHandoff(handoff: CheckoutHandoff): void {
+    this.checkoutHandoff = handoff;
+  }
+
+  /** True when this task runs hands-free checkout (autoCheckout on, the default). */
+  private async autoCheckoutFor(taskId: string): Promise<boolean> {
+    const task = await this.getTask(taskId);
+    return task?.autoCheckout !== false;
   }
 
   snapshot(): ChallengeBrokerSnapshot {
@@ -144,6 +161,18 @@ export class ChallengeBroker {
       if (!request) throw new Error("This harvester has no assigned challenge.");
       request.status = "solved";
       request.expiresAt = undefined;
+      const autoCheckout = this.checkoutHandoff ? await this.autoCheckoutFor(request.taskId) : false;
+      if (autoCheckout) {
+        // The harvester window stays assigned to this task while the automatic
+        // checkout runs, so dispatch never steals it mid-order. The handoff
+        // releases it when checkout ends.
+        await this.patchTask(request.taskId, "CAPTCHA solved · automatic checkout starting", { challengeStatus: "solved", challengeUrl: undefined });
+        await this.harvesters.incrementSolved(harvesterId);
+        this.emit();
+        await this.dispatchInternal();
+        this.checkoutHandoff?.(request.taskId, harvesterId);
+        return;
+      }
       request.assignedHarvesterId = undefined;
       await this.patchTask(request.taskId, "Challenge solved by user · continue checkout in the official window", {
         challengeStatus: "solved",

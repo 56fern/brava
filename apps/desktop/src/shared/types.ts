@@ -16,8 +16,12 @@ export type Profile = {
     cardholderName: string;
     brand: "Visa" | "Mastercard" | "Amex" | "Discover" | "Other";
     last4: string;
+    /** Full card number, stored encrypted at rest; only ever typed into the official checkout page. */
+    number?: string;
     expiryMonth: string;
     expiryYear: string;
+    /** Security code, stored encrypted at rest; only ever typed into the official checkout page. */
+    cvv?: string;
     billingSameAsShipping: boolean;
   };
   billing?: {
@@ -108,6 +112,8 @@ export type Task = {
   quantity: number;
   effectiveQuantity?: number;
   maxCartQuantity?: number;
+  /** When true (the default for new tasks), a matched signal drives add-to-cart → autofill → place order automatically. */
+  autoCheckout?: boolean;
   checkoutAmount?: number;
   orderNumber?: string;
   profileId: string;
