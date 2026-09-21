@@ -1,5 +1,6 @@
 import "dotenv/config";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const developmentDefaults = {
   licensePepper: "development-only-license-pepper-change-me",
@@ -7,12 +8,10 @@ const developmentDefaults = {
   adminToken: "development-admin-token-change-me",
 };
 
-const workingDirectory = process.cwd();
-const serviceWorkingDirectory = path.basename(workingDirectory).toLowerCase() === "api"
-  && path.basename(path.dirname(workingDirectory)).toLowerCase() === "apps";
-const defaultUpdateDir = serviceWorkingDirectory
-  ? path.resolve(workingDirectory, "public/updates")
-  : path.resolve(workingDirectory, "apps/api/public/updates");
+// Resolve paths properly for both development and production
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const defaultUpdateDir = path.resolve(__dirname, "../public/updates");
 
 export const config = {
   port: Number(process.env.PORT ?? 4310),
@@ -28,7 +27,7 @@ export const config = {
   updateDir: process.env.UPDATE_DIR ?? defaultUpdateDir,
   monitorSourceUrls: (process.env.MONITOR_SOURCE_URLS ?? "").split(",").map((value) => value.trim()).filter(Boolean),
   monitorIntervalMs: Math.max(15_000, Number(process.env.MONITOR_INTERVAL_SECONDS ?? 30) * 1_000),
-  monitorRequestTimeoutMs: Math.max(2_000, Number(process.env.MONITOR_REQUEST_TIMEOUT_SECONDS ?? 10) * 1_000),
+  monitorRequestTimeoutMs: Math.max(2_000, Number(process.env.MONITOR_REQUEST_TIMEOUT_SECONDS ?? 10) * 1000),
   publicCheckoutWebhookUrl: process.env.PUBLIC_CHECKOUT_WEBHOOK_URL ?? "",
   publicCheckoutAvatarPath: path.resolve(process.cwd(), process.env.PUBLIC_CHECKOUT_AVATAR_PATH ?? "../desktop/build/webhook-avatar.png"),
   betterAuthSecret: process.env.BETTER_AUTH_SECRET?.trim() ?? "",
