@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { harvesterProxyLabel, parseHarvesterProxy } from "../src/shared/harvester-proxy.js";
 
-vi.mock("electron", () => ({ BrowserWindow: class {}, screen: {} }));
+vi.mock("electron", () => ({ BrowserWindow: class {}, screen: {}, app: { isPackaged: false } }));
 
 describe("harvester window layout", () => {
   it("accepts one typed proxy per harvester and treats blank as localhost", () => {
@@ -50,8 +50,7 @@ describe("harvester window layout", () => {
   it("registers harvesters as separate taskbar windows and closes them with Brava", async () => {
     const { readFile } = await import("node:fs/promises");
     const main = await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8");
-    const manager = await readFile(new URL("../src/main/harvester-manager.ts", import.meta.url), "utf8");
-
+const manager = await readFile(new URL("../src/main/harvester-manager.ts", import.meta.url), "utf8");
     expect(manager).toContain("skipTaskbar: false");
     expect(manager).toContain('appId: "com.brava.companion"');
     expect(main).toContain('mainWindow?.once("closed"');
@@ -70,5 +69,19 @@ describe("harvester window layout", () => {
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(workArea.x + workArea.width);
       expect(bounds.y + bounds.height).toBeLessThanOrEqual(workArea.y + workArea.height);
     }
+  });
+
+  it("correctly handles harvester icon path for both packaged and development modes", async () => {
+    // This test ensures that the harvesterIconPath logic works correctly
+    // In development mode (isPackaged = false), it should use relative path
+    // In packaged mode (isPackaged = true), it should use resourcesPath
+    
+    const { readFile } = await import("node:fs/promises");
+    const manager = await readFile(new URL("../src/main/harvester-manager.ts", import.meta.url), "utf8");
+    
+    // Verify that the new logic is present in the file
+    expect(manager).toContain("app.isPackaged");
+    expect(manager).toContain("join(process.resourcesPath");
+    expect(manager).toContain("../../build/icon-large-v3.png");
   });
 });

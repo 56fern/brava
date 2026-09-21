@@ -1,4 +1,4 @@
-import { BrowserWindow, screen } from "electron";
+import { BrowserWindow, screen, app } from "electron";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,9 +11,8 @@ import { parseHarvesterProxy } from "../shared/harvester-proxy.js";
 
 const officialHosts = new Set(["pokemoncenter.com", "www.pokemoncenter.com"]);
 const harvesterIconPath = (() => {
-  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-  return resourcesPath
-    ? join(resourcesPath, "app.asar", "build", "icon-large-v3.png")
+  return app.isPackaged
+    ? join(process.resourcesPath, "app.asar", "build", "icon-large-v3.png")
     : fileURLToPath(new URL("../../build/icon-large-v3.png", import.meta.url));
 })();
 const harvesterLogoDataUrl = `data:image/png;base64,${readFileSync(harvesterIconPath).toString("base64")}`;
