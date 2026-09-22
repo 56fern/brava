@@ -1,5 +1,6 @@
 import type { Task } from "./types.js";
 import { normalizeCartQuantity } from "./cart-quantity.js";
+import { skuFromProductUrl } from "./product-input.js";
 
 export type TaskBatchInput = {
   productInput: string;
@@ -20,13 +21,14 @@ export function createTaskBatch(input: TaskBatchInput, createId: () => string = 
   const profileIds = input.profileIds.length ? [...new Set(input.profileIds)] : [""];
   const proxyIds = [...new Set(input.proxyIds)];
   const isUrl = /^https?:\/\//i.test(productInput);
+  const urlSku = isUrl ? skuFromProductUrl(productInput) : "";
   const updatedAt = now();
 
   return profileIds.flatMap((profileId, profileIndex) => Array.from({ length: batchQuantity }, (_, copyIndex) => ({
     id: createId(),
     name: productInput,
     productUrl: isUrl ? productInput : "",
-    sku: isUrl ? "" : productInput,
+    sku: isUrl ? urlSku : productInput,
     usePlaceholder: !isUrl && productInput.toUpperCase() === "PLACEHOLDER",
     monitorKeywords: productInput,
     autoApplyMonitorSignal: input.autoApplyMonitorSignal,

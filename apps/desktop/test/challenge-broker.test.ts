@@ -128,6 +128,18 @@ describe("ChallengeBroker", () => {
     broker.shutdown();
   });
 
+  it("keeps a detected CAPTCHA on the harvester already running checkout", async () => {
+    const { store, port, disk } = harness(["task-1"], ["harvester-1", "harvester-2"]);
+    const { ChallengeBroker } = await import("../src/main/challenge-broker.js");
+    const broker = new ChallengeBroker(store, () => null, port);
+
+    await broker.request("task-1", 0, challengeUrl("task-1"), "harvester-2");
+
+    expect(port.assign).toHaveBeenCalledWith("harvester-2", expect.any(String), "task-1", "task-1", challengeUrl("task-1"));
+    expect(disk().tasks[0]).toMatchObject({ challengeStatus: "assigned", assignedHarvesterId: "harvester-2" });
+    broker.shutdown();
+  });
+
   it("clears stale crash assignments and does not requeue challenges already solved", async () => {
     const { store, port, disk } = harness(["task-1", "task-2"], ["harvester-1"]);
     Object.assign(disk().harvesters[0]!, { status: "busy", assignedRequestId: "old-request", assignedTaskId: "task-1" });

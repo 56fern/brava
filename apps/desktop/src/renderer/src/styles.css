@@ -158,6 +158,7 @@ main { min-height: calc(100vh - 68px); }.content { max-width: 1540px; padding: 2
 .resource-picker-group-head { min-height: 43px; display: flex; align-items: center; gap: 6px; border: 1px solid transparent; border-radius: 7px; background: #0d1723; }
 .resource-picker-group-head:hover,.resource-picker-group.expanded .resource-picker-group-head { border-color: #294767; background: #122033; }
 .resource-group-select { min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px; padding: 7px 8px; color: #dbe5f0; cursor: pointer; }
+.resource-group-summary { border: 0; background: transparent; text-align: left; }
 .resource-group-select > input { width: 14px; height: 14px; margin: 0; flex: 0 0 auto; accent-color: #238cff; }
 .resource-group-select > span { min-width: 0; display: grid; gap: 2px; }
 .resource-group-select b,.resource-group-select small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -762,11 +763,10 @@ main::-webkit-scrollbar { width: 0; height: 0; }
 .status.working { color: #54d89b; border-color: #28513f; background: #14281f; }
 .status.failed { color: #ff6677; border-color: #69313a; background: #2c171d; }
 @media (max-width: 1380px) {
-  .task-columns { grid-template-columns: 60px minmax(130px,1.3fr) minmax(95px,.9fr) 78px 78px minmax(92px,.8fr) minmax(110px,auto); }
-  .task-columns > :nth-child(4) { display: none; }
+  .task-columns { grid-template-columns: 58px minmax(118px,1.25fr) minmax(82px,.82fr) minmax(82px,.82fr) 68px 68px minmax(86px,.75fr) minmax(72px,auto); }
 }
 @media (max-width: 1080px) {
-  .task-columns { grid-template-columns: 58px minmax(120px,1.3fr) minmax(90px,.9fr) 76px minmax(88px,.8fr) 105px; }
+  .task-columns { grid-template-columns: 54px minmax(112px,1.25fr) minmax(78px,.8fr) minmax(78px,.8fr) 62px minmax(82px,.72fr) minmax(68px,auto); }
   .task-columns > :nth-child(6) { display: none; }
 }
 
@@ -1311,15 +1311,13 @@ html[data-theme="light"] .task-status-cell.status.idle { color: #596c82; }
 html[data-theme="light"] .task-status-cell.status.stopped,
 html[data-theme="light"] .task-status-cell.status.declined,
 html[data-theme="light"] .task-status-cell.status.error { color: #c83045; }
-@media (max-width: 1380px) {
+@media (max-width: 1080px) {
   .task-columns > :nth-child(4) {
-    display: none !important;
+    display: block !important;
   }
   .task-columns.manager-row > .task-proxy-cell {
-    display: none !important;
+    display: flex !important;
   }
-}
-@media (max-width: 1080px) {
   .task-columns > :nth-child(6) {
     display: none !important;
   }

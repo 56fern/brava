@@ -190,6 +190,27 @@ export function buildSubmitOrderScript(): string {
 })()`;
 }
 
+/** Detects a CAPTCHA that is actually present on the current checkout page. */
+export function buildCaptchaDetectionScript(): string {
+  return `(() => {
+  const selectors = [
+    'iframe[src*="hcaptcha" i]',
+    'iframe[title*="hcaptcha" i]',
+    'iframe[src*="recaptcha" i]',
+    'iframe[src*="challenges.cloudflare" i]',
+    '.h-captcha',
+    '.g-recaptcha',
+    '.cf-turnstile',
+    '[data-sitekey]',
+    '#challenge-stage'
+  ];
+  const element = selectors.map((selector) => document.querySelector(selector)).find(Boolean);
+  const pageSignal = /captcha|verify you are human|security check|just a moment/i.test(document.title || '')
+    || /captcha|challenge/.test(location.pathname.toLowerCase());
+  return { detected: Boolean(element || pageSignal), url: location.href };
+})()`;
+}
+
 /** Pure confirmation detection from the page URL/title/text after submit. */
 export function parseOrderConfirmation(input: { url: string; title: string; bodyText: string }): { orderNumber?: string; total?: string; confirmed: boolean } {
   const url = input.url.toLowerCase();

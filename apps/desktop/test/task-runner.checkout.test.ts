@@ -101,4 +101,44 @@ describe("TaskRunner checkout automation", () => {
     expect(checkout).toHaveBeenCalledWith(expect.objectContaining({ autoCheckout: false }), expect.objectContaining({ id: "profile-1" }), "harvester-legacy");
     expect(disk().tasks[0]?.status).toBe("completed");
   });
+
+  it("starts checkout immediately without inventing a CAPTCHA request", async () => {
+    const { store, disk } = harness({ ...checkoutTask(), status: "found" });
+    const { TaskRunner } = await import("../src/main/task-runner.js");
+    const runner = new TaskRunner(store, () => null);
+    const request = vi.fn(async () => undefined);
+    runner.setChallengeHandlers({ request, cancel: vi.fn(async () => undefined) });
+    const checkout = vi.fn(async () => ({ status: "completed" as const, message: "Checkout complete" }));
+    runner.setCheckoutHandlers({ run: checkout });
+
+    await runner.requestAutoCheckout("test-task", checkoutTask().productUrl);
+
+    expect(checkout).toHaveBeenCalledTimes(1);
+    expect(request).not.toHaveBeenCalled();
+    expect(disk().tasks[0]?.status).toBe("completed");
+  });
+
+  it("queues the real CAPTCHA and resumes checkout after it is solved", async () => {
+    const challengeUrl = "https://www.pokemoncenter.com/challenge/test-task";
+    const { store, disk } = harness({ ...checkoutTask(), status: "found" });
+    const { TaskRunner } = await import("../src/main/task-runner.js");
+    const runner = new TaskRunner(store, () => null);
+    const request = vi.fn(async () => undefined);
+    runner.setChallengeHandlers({ request, cancel: vi.fn(async () => undefined) });
+    const checkout = vi.fn()
+      .mockResolvedValueOnce({ status: "captcha" as const, challengeUrl, harvesterId: "harvester-1", message: "CAPTCHA detected" })
+      .mockResolvedValueOnce({ status: "completed" as const, message: "Checkout resumed" });
+    runner.setCheckoutHandlers({ run: checkout });
+
+    await runner.requestAutoCheckout("test-task", checkoutTask().productUrl);
+    expect(request).toHaveBeenCalledWith("test-task", challengeUrl, "harvester-1");
+    expect(disk().tasks[0]).toMatchObject({ status: "awaiting_user", challengeStatus: "queued", challengeUrl });
+
+    const waiting = disk().tasks[0]!;
+    waiting.challengeStatus = "solved";
+    await runner.beginAutoCheckout("test-task", "harvester-1");
+
+    expect(checkout).toHaveBeenCalledTimes(2);
+    expect(disk().tasks[0]?.status).toBe("completed");
+  });
 });

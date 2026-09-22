@@ -8,6 +8,7 @@ import { SharedScheduler, type SchedulerStats } from "./shared-scheduler.js";
 import { resolveCartQuantity } from "../shared/cart-quantity.js";
 const defaultQueueCheckIntervalMinutes = 3;
 const cartResultTimeoutMs = 15_000;
+const automaticCheckoutTimeoutMs = 2 * 60_000;
 const productProbeIntervalMs = 30_000;
 
 function queueCheckInterval(task: Task): number {
@@ -51,10 +52,10 @@ export class TaskRunner {
   private readonly pendingUpdates = new Map<string, Task>();
   private updateTimer: NodeJS.Timeout | undefined;
   private challengeHandlers: {
-    request: (taskId: string, challengeUrl: string) => Promise<void>;
+    request: (taskId: string, challengeUrl: string, preferredHarvesterId?: string) => Promise<void>;
     cancel: (taskId: string) => Promise<void>;
   } | undefined;
-  private checkoutHandlers: { run: (task: Task, profile: Profile, harvesterId: string) => Promise<CheckoutOutcome> } | undefined;
+  private checkoutHandlers: { run: (task: Task, profile: Profile, harvesterId?: string) => Promise<CheckoutOutcome> } | undefined;
   private productProbe: ((sku: string) => Promise<ProductSignal | null>) | undefined;
 
   constructor(
@@ -67,7 +68,7 @@ export class TaskRunner {
   ) {}
 
   setChallengeHandlers(handlers: {
-    request: (taskId: string, challengeUrl: string) => Promise<void>;
+    request: (taskId: string, challengeUrl: string, preferredHarvesterId?: string) => Promise<void>;
     cancel: (taskId: string) => Promise<void>;
   }): void {
     this.challengeHandlers = handlers;
@@ -384,33 +385,40 @@ export class TaskRunner {
       return;
     }
     this.clear(id);
-    await this.update(id, "adding_to_cart", `${cartQuantityMessage(task)} · waiting for the harvester challenge to clear`, cartQuantityPatch(task, task.maxCartQuantity));
-    this.scheduler.schedule(`${id}:cart-result-timeout`, cartResultTimeoutMs, () => this.expireCartAttempt(id));
-    await this.challengeHandlers?.request(id, productUrl);
+    await this.update(id, "adding_to_cart", `${cartQuantityMessage(task)} · automatic checkout starting`, cartQuantityPatch(task, task.maxCartQuantity));
+    this.scheduler.schedule(`${id}:automatic-checkout-timeout`, automaticCheckoutTimeoutMs, () => this.expireCartAttempt(id));
+    await this.beginAutoCheckout(id, "");
   }
 
   /** Runs the automatic checkout for a task already in adding_to_cart on the assigned harvester window. */
   async beginAutoCheckout(id: string, harvesterId: string): Promise<void> {
     if (!this.checkoutHandlers) return;
-    const task = await this.getTask(id);
-    if (!task || task.status !== "adding_to_cart") return;
+    let task = await this.getTask(id);
+    if (!task) return;
+    if (task.status === "awaiting_user" && task.challengeStatus === "solved") {
+      task = await this.update(id, "adding_to_cart", "CAPTCHA solved · automatic checkout resuming", { assignedHarvesterId: harvesterId }) ?? task;
+    }
+    if (task.status !== "adding_to_cart") return;
     let outcome: CheckoutOutcome;
     try {
       const profile = (await this.store.load()).profiles.find((item) => item.id === task.profileId);
       if (!profile) throw new Error("the task has no assigned profile");
       outcome = this.checkoutHandlers
-        ? await this.checkoutHandlers.run(task, profile, harvesterId)
+        ? await this.checkoutHandlers.run(task, profile, harvesterId || undefined)
         : { status: "declined" as const, message: "No checkout automation is wired - use Review to check out manually" };
     } catch (error) {
       outcome = { status: "declined", message: `Automatic checkout failed - ${error instanceof Error ? error.message : "unknown error"}` };
     }
     const stillRunning = await this.getTask(id);
     if (stillRunning && stillRunning.status !== "adding_to_cart") return;
-    if (outcome.status === "completed") await this.complete(id, outcome);
+    if (outcome.status === "captcha") {
+      this.clear(id);
+      await this.reportChallenge(id, outcome.challengeUrl, outcome.harvesterId || harvesterId || undefined);
+    } else if (outcome.status === "completed") await this.complete(id, outcome);
     else await this.decline(id, outcome.message);
   }
 
-  setCheckoutHandlers(handlers: { run: (task: Task, profile: Profile, harvesterId: string) => Promise<CheckoutOutcome> }): void {
+  setCheckoutHandlers(handlers: { run: (task: Task, profile: Profile, harvesterId?: string) => Promise<CheckoutOutcome> }): void {
     this.checkoutHandlers = handlers;
   }
 
@@ -430,7 +438,7 @@ export class TaskRunner {
     );
   }
 
-  async reportChallenge(id: string, challengeUrl: string): Promise<void> {
+  async reportChallenge(id: string, challengeUrl: string, preferredHarvesterId?: string): Promise<void> {
     const task = await this.getTask(id);
     if (!task) throw new Error("Task not found");
     let parsed: URL;
@@ -445,7 +453,8 @@ export class TaskRunner {
       assignedHarvesterId: undefined,
     });
     if (!this.challengeHandlers) return;
-    await this.challengeHandlers.request(id, challengeUrl);
+    if (preferredHarvesterId) await this.challengeHandlers.request(id, challengeUrl, preferredHarvesterId);
+    else await this.challengeHandlers.request(id, challengeUrl);
   }
 
   private async getTask(id: string): Promise<Task | undefined> {

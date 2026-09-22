@@ -22,9 +22,13 @@ describe("simplified task builder UI", () => {
     const taskEditor = app.slice(app.indexOf("function TaskEditModal("), app.indexOf("function TaskEditOptions("));
     expect(taskEditor).not.toContain("Task name");
     expect(taskEditor).not.toContain("form.name");
-    const activeEditOptions = app.slice(app.indexOf("function TaskEditOptions("), app.indexOf("function TaskEditOptionsLegacy("));
+    const activeEditOptions = app.slice(app.indexOf("function TaskEditOptions("), app.indexOf("function TaskLogsModal("));
     expect(activeEditOptions).not.toContain("Proxy fallback");
     expect(activeEditOptions).not.toContain("offerProxyFallback");
+    expect(activeEditOptions).toContain("<GroupedResourceSelect");
+    expect(activeEditOptions).toContain("groups={profileGroups}");
+    expect(activeEditOptions).toContain("groups={proxyGroups}");
+    expect(activeEditOptions).not.toContain("<select");
   });
 
   it("shows grouped profile and proxy selection with a quantity-backed task count", async () => {
@@ -36,6 +40,7 @@ describe("simplified task builder UI", () => {
     expect(app).toContain("Task copies");
     expect(app).toContain('aria-multiselectable="true"');
     expect(app).toContain("function GroupedResourceMultiSelect(");
+    expect(app).toContain("function GroupedResourceSelect(");
     expect(app).toContain("profileGroups={data.profileGroups}");
     expect(app).toContain("proxyGroups={data.proxyGroups}");
     expect(app).toContain("Select all ${pluralNoun} in ${group.name}");
@@ -46,5 +51,16 @@ describe("simplified task builder UI", () => {
     expect(app).toContain("onClick={() => onChange([])}");
     expect(app).toContain("function VirtualResourceOptions(");
     expect(app).toContain("createTaskBatch(form)");
+  });
+
+  it("tracks touched edit fields and prefers an existing SKU", async () => {
+    const app = await readFile(new URL("../src/renderer/src/App.tsx", import.meta.url), "utf8");
+    const taskEditor = app.slice(app.indexOf("function TaskEditModal("), app.indexOf("function TaskEditOptions("));
+    expect(taskEditor).toContain("taskEditFormFor(task)");
+    expect(taskEditor).toContain("dirtyFields");
+    expect(taskEditor).toContain("buildTaskEditPatch(form, dirtyFields)");
+    expect(taskEditor).not.toContain("...task, ...stored");
+    expect(app).toContain("const updateTask = (patch: TaskEditPatch)");
+    expect(app).toContain("const updateAllTasks = (patch: TaskEditPatch)");
   });
 });

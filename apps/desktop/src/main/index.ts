@@ -93,10 +93,10 @@ if (!hasSingleInstanceLock) {
       void runner.beginAutoCheckout(taskId, harvesterId).catch(() => undefined),
   });
   runner.setChallengeHandlers({
-    request: (taskId, challengeUrl) => challenges.request(taskId, 0, challengeUrl),
+    request: (taskId, challengeUrl, preferredHarvesterId) => challenges.request(taskId, 0, challengeUrl, preferredHarvesterId),
     cancel: (taskId) => challenges.cancelTask(taskId),
   });
-  runner.setCheckoutHandlers({ run: (task, profile, harvesterId) => harvesters.runCheckout(harvesterId, task, profile) });
+  runner.setCheckoutHandlers({ run: (task, profile, harvesterId) => harvesterId ? harvesters.runCheckout(harvesterId, task, profile) : harvesters.runCheckoutOnAvailable(task, profile) });
   harvesters.setLifecycleHandlers({
     onAvailable: () => challenges.dispatch(),
     onClosed: (harvesterId, redistribute) => challenges.releaseHarvester(harvesterId, redistribute),

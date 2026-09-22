@@ -83,6 +83,7 @@ export class HarvesterManager {
   private readonly assignedChallengeUrls = new Map<string, string>();
   private readonly solveWatchers = new Map<string, NodeJS.Timeout>();
   private readonly insertedCss = new Map<string, string>();
+  private readonly activeCheckouts = new Set<string>();
   private closingAll = false;
   private onAvailable: ((id: string) => void | Promise<void>) | undefined;
   private onClosed: ((id: string, redistribute: boolean) => void | Promise<void>) | undefined;
@@ -259,6 +260,10 @@ export class HarvesterManager {
     browser.webContents.on("did-finish-load", () => {
       browser.show();
       void (async () => {
+        if (this.activeCheckouts.has(id)) {
+          await this.clearChallengeCss(id, browser);
+          return;
+        }
         const assignedUrl = this.assignedChallengeUrls.get(id);
         const currentUrl = browser.webContents.getURL();
         if (permitsChallengeNavigation(currentUrl)) {
@@ -283,6 +288,7 @@ export class HarvesterManager {
     browser.on("closed", () => {
       this.windows.delete(id);
       this.assignedChallengeUrls.delete(id);
+      this.activeCheckouts.delete(id);
       this.clearSolveWatcher(id);
       this.insertedCss.delete(id);
       if (!this.closingAll) void (async () => {
@@ -352,6 +358,17 @@ export class HarvesterManager {
     await this.incrementSolved(id);
   }
 
+  async runCheckoutOnAvailable(task: Task, profile: Parameters<typeof buildCheckoutFields>[0]): Promise<CheckoutOutcome> {
+    const data = await this.store.load();
+    const harvester = data.harvesters.find((item) => item.status !== "busy" && item.status !== "error" && !item.assignedRequestId && !item.assignedTaskId);
+    if (!harvester) {
+      return { status: "declined", message: "No available harvester can run checkout; open or create a harvester and retry the task." };
+    }
+    await this.open(harvester.id);
+    const outcome = await this.runCheckout(harvester.id, task, profile);
+    return outcome.status === "captcha" ? { ...outcome, harvesterId: harvester.id } : outcome;
+  }
+
   /**
    * Hands-free checkout: lift the CAPTCHA cocoon, make sure the window is on the
    * product page, drive add-to-cart → autofill → place-order, then release the
@@ -365,6 +382,7 @@ export class HarvesterManager {
     }
     this.clearSolveWatcher(id);
     await this.clearChallengeCss(id, browser);
+    this.activeCheckouts.add(id);
     await this.update(id, "busy", "Automatic checkout running", { assignedTaskId: task.id });
     try {
       const currentUrl = browser.webContents.getURL();
@@ -375,12 +393,14 @@ export class HarvesterManager {
         await browser.webContents.executeJavaScript("document.readyState === 'complete' || new Promise((resolve) => addEventListener('load', resolve, { once: true }))", true).catch(() => undefined);
       }
       const outcome = await this.checkout.run(task, profile, browser.webContents);
+      this.activeCheckouts.delete(id);
       const assigned = this.assignedChallengeUrls.get(id);
-      await this.update(id, browser.isDestroyed() ? "closed" : "open", outcome.status === "completed" ? `Checkout complete · ${outcome.message}` : "Checkout paused · continue manually", { assignedRequestId: undefined, assignedTaskId: undefined });
-      if (assigned) this.assignedChallengeUrls.delete(id);
-      if (assigned) await this.showWaiting(id, browser);
-      return outcome;
+      await this.update(id, browser.isDestroyed() ? "closed" : "open", outcome.status === "completed" ? `Checkout complete · ${outcome.message}` : outcome.status === "captcha" ? "CAPTCHA detected · waiting for the user" : "Checkout paused · continue manually", { assignedRequestId: undefined, assignedTaskId: undefined });
+      if (assigned && outcome.status !== "captcha") this.assignedChallengeUrls.delete(id);
+      if (assigned && outcome.status !== "captcha") await this.showWaiting(id, browser);
+      return outcome.status === "captcha" ? { ...outcome, harvesterId: id } : outcome;
     } catch (error) {
+      this.activeCheckouts.delete(id);
       const message = error instanceof Error ? error.message : "Automatic checkout failed";
       await this.update(id, browser.isDestroyed() ? "closed" : "open", `Checkout paused · ${message}`, { assignedRequestId: undefined, assignedTaskId: undefined });
       return { status: "declined", message };

@@ -16,6 +16,7 @@ export type ChallengeRequest = {
   attempts: number;
   testMode: boolean;
   challengeUrl?: string;
+  preferredHarvesterId?: string;
 };
 
 export type ChallengeBrokerSnapshot = {
@@ -124,7 +125,7 @@ export class ChallengeBroker {
     });
   }
 
-  async request(taskId: string, priority = 0, challengeUrl?: string): Promise<void> {
+  async request(taskId: string, priority = 0, challengeUrl?: string, preferredHarvesterId?: string): Promise<void> {
     return this.run(async () => {
       const existing = this.requests.find((request) => request.taskId === taskId && isActive(request));
       if (existing) {
@@ -135,7 +136,7 @@ export class ChallengeBroker {
       if (!task) throw new Error("Task not found");
       if (!this.testMode && !isOfficialChallengeUrl(challengeUrl)) throw new Error("A real Pokémon Center CAPTCHA URL is required before a harvester can be assigned.");
       const createdAt = this.now().toISOString();
-      const request: ChallengeRequest = { id: randomUUID(), taskId, status: "queued", priority, createdAt, attempts: 0, testMode: this.testMode, challengeUrl };
+      const request: ChallengeRequest = { id: randomUUID(), taskId, status: "queued", priority, createdAt, attempts: 0, testMode: this.testMode, challengeUrl, ...(preferredHarvesterId ? { preferredHarvesterId } : {}) };
       this.requests.push(request);
       await this.patchTask(taskId, this.testMode ? "Development challenge queued" : "Challenge queued · waiting for a harvester", {
         challengeRequestId: request.id,
@@ -255,9 +256,11 @@ export class ChallengeBroker {
     const data = await this.store.load();
     const assignedIds = new Set(this.requests.filter((request) => request.status === "assigned").map((request) => request.assignedHarvesterId));
     const available = data.harvesters.filter((harvester) => harvester.id !== excludedHarvesterId && harvester.status !== "error" && !assignedIds.has(harvester.id) && !harvester.assignedRequestId);
-    for (const harvester of available) {
+    while (available.length) {
       const request = next();
       if (!request) break;
+      const preferredIndex = request.preferredHarvesterId ? available.findIndex((harvester) => harvester.id === request.preferredHarvesterId) : -1;
+      const harvester = available.splice(preferredIndex >= 0 ? preferredIndex : 0, 1)[0]!;
       const task = data.tasks.find((item) => item.id === request.taskId);
       if (!task) { request.status = "cancelled"; continue; }
       request.status = "assigned";

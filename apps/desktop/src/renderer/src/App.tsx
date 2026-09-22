@@ -5,7 +5,7 @@ import type { AppData, Harvester, LicenseSession, MonitorState, Profile, ProxyCo
 import { validateAppData } from "../../shared/backup";
 import { ProfileCsvError, parseProfilesCsv } from "../../shared/profile-csv";
 import { createTaskBatch } from "../../shared/task-builder";
-import { normalizeCartQuantity } from "../../shared/cart-quantity";
+import { buildTaskEditPatch, taskEditFormFor, type TaskEditField, type TaskEditForm, type TaskEditPatch } from "../../shared/task-edit";
 import { getVirtualRange } from "../../shared/virtual-window";
 import { harvesterProxyLabel, parseHarvesterProxy } from "../../shared/harvester-proxy";
 import bravaLogoUrl from "./assets/brava-logo-v2.png";
@@ -305,34 +305,20 @@ function Tasks({ data, save }: { data: AppData; save: (data: AppData) => Promise
     }
     setContextMenu({ taskId, x, y });
   };
-  const updateTask = (updated: Task) => {
-    void save({ ...data, tasks: data.tasks.map((task) => task.id === updated.id ? updated : task) });
+  const updateTask = (patch: TaskEditPatch) => {
+    if (!editingTask) return;
+    const at = new Date().toISOString();
+    const message = editingTask.mode === "product" ? "Product settings updated" : "Task settings updated";
+    void save({ ...data, tasks: data.tasks.map((task) => task.id === editingTask.task.id
+      ? { ...task, ...patch, updatedAt: at, history: [...(task.history ?? []), { status: task.status, message, at }].slice(-30) }
+      : task) });
     setEditingTask(null);
   };
-  const updateAllTasks = (template: Task) => {
+  const updateAllTasks = (patch: TaskEditPatch) => {
     if (!selectedGroup) return;
     const at = new Date().toISOString();
-    const common: Partial<Task> = {
-      name: template.name,
-      productUrl: template.productUrl,
-      sku: template.sku,
-      usePlaceholder: template.usePlaceholder,
-      monitorKeywords: template.monitorKeywords,
-      autoApplyMonitorSignal: template.autoApplyMonitorSignal,
-      variant: template.variant,
-      quantity: template.quantity,
-      effectiveQuantity: template.effectiveQuantity,
-      maxCartQuantity: template.maxCartQuantity,
-      profileId: template.profileId,
-      proxyId: template.proxyId,
-      proxyPoolIds: template.proxyPoolIds,
-      waitForQueue: template.waitForQueue,
-      queueCheckIntervalMinutes: template.queueCheckIntervalMinutes,
-      loopProfiles: template.loopProfiles,
-      offerProfileFallback: template.offerProfileFallback,
-    };
     const tasks = data.tasks.map((task) => task.groupId === selectedGroup.id
-      ? { ...task, ...common, updatedAt: at, history: [...(task.history ?? []), { status: task.status, message: "Task settings updated with Edit all", at }].slice(-30) }
+      ? { ...task, ...patch, updatedAt: at, history: [...(task.history ?? []), { status: task.status, message: "Task settings updated with Edit all", at }].slice(-30) }
       : task);
     void save({ ...data, tasks });
     setEditingAllTasks(false);
@@ -401,8 +387,8 @@ function Tasks({ data, save }: { data: AppData; save: (data: AppData) => Promise
     </ContextMenuSurface>}
     {editingGroup && <GroupNameForm title="Edit task group" initialName={editingGroup.name} onCancel={() => setEditingGroup(null)} onSave={(group) => void updateGroupName(group)} />}
     {duplicatingGroup && <TaskGroupForm initialName={`${duplicatingGroup.name} copy`} initialSite={duplicatingGroup.site} onCancel={() => setDuplicatingGroup(null)} onSave={(group) => void duplicateGroup(duplicatingGroup, group)} />}
-    {editingTask && <TaskEditModal task={editingTask.task} mode={editingTask.mode} profiles={data.profiles} proxies={data.proxies} onCancel={() => setEditingTask(null)} onSave={updateTask} />}
-    {editingAllTasks && groupTasks[0] && <TaskEditModal task={groupTasks[0]} mode="full" profiles={data.profiles} proxies={data.proxies} bulkCount={groupTasks.length} onCancel={() => setEditingAllTasks(false)} onSave={updateAllTasks} />}
+    {editingTask && <TaskEditModal task={editingTask.task} mode={editingTask.mode} profileGroups={data.profileGroups} profiles={data.profiles} proxyGroups={data.proxyGroups} proxies={data.proxies} onCancel={() => setEditingTask(null)} onSave={updateTask} />}
+    {editingAllTasks && groupTasks[0] && <TaskEditModal task={groupTasks[0]} mode="full" profileGroups={data.profileGroups} profiles={data.profiles} proxyGroups={data.proxyGroups} proxies={data.proxies} bulkCount={groupTasks.length} onCancel={() => setEditingAllTasks(false)} onSave={updateAllTasks} />}
     {logTask && <TaskLogsModal task={logTask} onClose={() => setLogTaskId(null)} />}
     {deleteTarget === "tasks" && selectedGroup && <DeleteConfirmModal title={`Delete all ${groupTasks.length} tasks?`} body={`This removes every task in ${selectedGroup.name}. The task group will remain.`} confirmLabel="Delete all tasks" onCancel={() => setDeleteTarget(null)} onConfirm={deleteAllTasks} />}
     {deleteTarget === "group" && selectedGroup && <DeleteConfirmModal title={`Delete ${selectedGroup.name}?`} body={`This removes the task group and all ${groupTasks.length} tasks inside it.`} confirmLabel="Delete group" onCancel={() => setDeleteTarget(null)} onConfirm={deleteSelectedGroup} />}
@@ -545,41 +531,35 @@ function TaskContextMenuLegacy({ task, profileEmail, x, y, onClose, onStart, onS
   return createPortal(<div className="task-context-menu" style={{ left, top }} role="menu" aria-label={`Actions for ${task.name}`} onContextMenu={(event) => event.preventDefault()}><div className="task-context-head"><span>1 task selected</span><b>{task.name}</b></div><button disabled={!idle} onClick={() => run(onStart)}><Play size={14} /><span>Start</span></button><button disabled={idle} onClick={() => run(onStop)}><Square size={13} /><span>Stop</span></button><button onClick={() => run(onRestart)}><RotateCcw size={14} /><span>Restart task</span></button><div className="task-context-separator" /><button onClick={() => run(onDuplicate)}><Copy size={14} /><span>Duplicate</span></button><button disabled={!profileEmail} title={profileEmail ? `Copy ${profileEmail}` : "No profile email assigned"} onClick={() => run(onCopyProfileEmail)}><UserRound size={14} /><span>Copy profile email</span></button><button onClick={() => run(onEdit)}><Pencil size={14} /><span>Edit</span></button><button onClick={() => run(onManageProduct)}><Box size={14} /><span>Manage product</span></button><button onClick={() => run(onViewLogs)}><Activity size={14} /><span>View task logs</span></button><div className="task-context-separator" /><button className="danger" onClick={() => run(onDelete)}><Trash2 size={14} /><span>Delete</span></button></div>, document.body);
 }
 
-function TaskEditModal({ task, mode, profiles, proxies, bulkCount: _bulkCount, onCancel, onSave }: { task: Task; mode: "full" | "product"; profiles: Profile[]; proxies: ProxyConfig[]; bulkCount?: number; onCancel: () => void; onSave: (task: Task) => void }) {
-  const [form, setForm] = useState<TaskEditForm>({ productInput: task.productUrl || task.sku || "", sku: task.sku ?? "", usePlaceholder: task.usePlaceholder ?? false, monitorKeywords: task.monitorKeywords ?? task.name, autoApplyMonitorSignal: task.autoApplyMonitorSignal ?? false, productUrl: task.productUrl, variant: task.variant, quantity: task.quantity, profileId: task.profileId, proxyId: task.proxyId, waitForQueue: task.waitForQueue ?? false, queueCheckIntervalMinutes: 3, loopProfiles: task.loopProfiles ?? task.offerProfileFallback ?? false, offerProfileFallback: task.loopProfiles ?? task.offerProfileFallback ?? false });
+function TaskEditModal({ task, mode, profileGroups, profiles, proxyGroups, proxies, bulkCount: _bulkCount, onCancel, onSave }: { task: Task; mode: "full" | "product"; profileGroups: ResourceGroup[]; profiles: Profile[]; proxyGroups: ResourceGroup[]; proxies: ProxyConfig[]; bulkCount?: number; onCancel: () => void; onSave: (patch: TaskEditPatch) => void }) {
+  const [form, setForm] = useState<TaskEditForm>(() => taskEditFormFor(task));
+  const [dirtyFields, setDirtyFields] = useState<TaskEditField[]>([]);
+  const setField = <Field extends TaskEditField,>(field: Field, value: TaskEditForm[Field]) => {
+    setForm((current) => ({ ...current, [field]: value }));
+    setDirtyFields((current) => current.includes(field) ? current : [...current, field]);
+  };
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const at = new Date().toISOString();
-    const message = mode === "product" ? "Product settings updated" : "Task settings updated";
-    const { productInput, ...stored } = form;
-    const value = productInput.trim();
-    const isUrl = /^https?:\/\//i.test(value);
-    const quantity = normalizeCartQuantity(form.quantity);
-    onSave({ ...task, ...stored, name: value, productUrl: isUrl ? value : "", sku: isUrl ? "" : value, usePlaceholder: false, variant: "", quantity, effectiveQuantity: quantity, maxCartQuantity: undefined, monitorKeywords: value, proxyPoolIds: form.proxyId ? [form.proxyId] : [], queueCheckIntervalMinutes: 3, offerProfileFallback: form.loopProfiles, updatedAt: at, history: [...(task.history ?? []), { status: task.status, message, at }].slice(-30) });
+    if (!dirtyFields.length) return onCancel();
+    onSave(buildTaskEditPatch(form, dirtyFields));
   };
-  return createPortal(<div className="modal-backdrop task-builder-backdrop" onMouseDown={onCancel}><form className="task-builder-modal task-edit-modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}><header className="task-builder-head"><div className="task-builder-title"><div className="task-builder-icon">{mode === "product" ? <Box size={18} /> : <Pencil size={18} />}</div><div><h2>{mode === "product" ? "Product" : "Edit task"}</h2></div></div><button type="button" className="task-builder-close" aria-label="Close task editor" onClick={onCancel}><X size={18} /></button></header><div className="task-builder-body"><section className="task-builder-section"><div className="task-builder-section-head"><div><b>Setup</b></div></div><div className="task-builder-grid"><label className="task-builder-field wide"><span>SKU / Product URL</span><input required autoFocus value={form.productInput} onChange={(event) => setForm({ ...form, productInput: event.target.value })} /></label><label className="task-builder-field"><span>Mode</span><input readOnly value="Default" /></label><label className="task-builder-field"><span>Cart quantity</span><input aria-label="Cart quantity" type="number" min="1" max="999" value={form.quantity} onChange={(event) => setForm({ ...form, quantity: Number(event.target.value) })} /></label></div></section>{mode === "full" && <TaskEditOptions form={form} setForm={setForm} profiles={profiles} proxies={proxies} />}</div><footer className="task-builder-actions"><span /><div><button type="button" className="ghost" onClick={onCancel}>Cancel</button><button type="submit" className="primary">Save</button></div></footer></form></div>, document.body);
+  return createPortal(<div className="modal-backdrop task-builder-backdrop" onMouseDown={onCancel}><form className="task-builder-modal task-edit-modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}><header className="task-builder-head"><div className="task-builder-title"><div className="task-builder-icon">{mode === "product" ? <Box size={18} /> : <Pencil size={18} />}</div><div><h2>{mode === "product" ? "Product" : "Edit task"}</h2></div></div><button type="button" className="task-builder-close" aria-label="Close task editor" onClick={onCancel}><X size={18} /></button></header><div className="task-builder-body"><section className="task-builder-section"><div className="task-builder-section-head"><div><b>Setup</b></div></div><div className="task-builder-grid"><label className="task-builder-field wide"><span>SKU / Product URL</span><input required autoFocus value={form.productInput} onChange={(event) => setField("productInput", event.target.value)} /></label><label className="task-builder-field"><span>Mode</span><input readOnly value="Default" /></label><label className="task-builder-field"><span>Cart quantity</span><input aria-label="Cart quantity" type="number" min="1" max="999" value={form.quantity} onChange={(event) => setField("quantity", Number(event.target.value))} /></label></div></section>{mode === "full" && <TaskEditOptions form={form} onChange={setField} profileGroups={profileGroups} profiles={profiles} proxyGroups={proxyGroups} proxies={proxies} />}</div><footer className="task-builder-actions"><span /><div><button type="button" className="ghost" onClick={onCancel}>Cancel</button><button type="submit" className="primary">Save</button></div></footer></form></div>, document.body);
 }
 
-type TaskEditForm = { productInput: string; sku: string; usePlaceholder: boolean; monitorKeywords: string; autoApplyMonitorSignal: boolean; productUrl: string; variant: string; quantity: number; profileId: string; proxyId: string; waitForQueue: boolean; queueCheckIntervalMinutes: number; loopProfiles: boolean; offerProfileFallback: boolean; offerProxyFallback?: boolean };
-
-function TaskEditOptions({ form, setForm, profiles, proxies }: { form: TaskEditForm; setForm: (form: TaskEditForm) => void; profiles: Profile[]; proxies: ProxyConfig[] }) {
+function TaskEditOptions({ form, onChange, profileGroups, profiles, proxyGroups, proxies }: { form: TaskEditForm; onChange: <Field extends TaskEditField>(field: Field, value: TaskEditForm[Field]) => void; profileGroups: ResourceGroup[]; profiles: Profile[]; proxyGroups: ResourceGroup[]; proxies: ProxyConfig[] }) {
   return <section className="task-builder-section">
     <div className="task-builder-section-head"><div><b>Assignment</b></div></div>
     <div className="task-builder-grid">
-      <label className="task-builder-field"><span>Profiles</span><select value={form.profileId} onChange={(event) => setForm({ ...form, profileId: event.target.value })}><option value="">No profile</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></label>
-      <label className="task-builder-field"><span>Proxies</span><select value={form.proxyId} onChange={(event) => setForm({ ...form, proxyId: event.target.value })}><option value="">Localhost (no proxy)</option>{proxies.map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.name}</option>)}</select></label>
+      <div className="task-builder-field"><span>Profiles</span><GroupedResourceSelect groups={profileGroups} items={profiles.map((profile) => ({ id: profile.id, groupId: profile.groupId, name: profile.name, detail: profile.email }))} selectedId={form.profileId} noun="profile" emptyLabel="No profiles available" noSelectionLabel="No profile" emptyOptionLabel="No profile" onChange={(profileId) => onChange("profileId", profileId)} /></div>
+      <div className="task-builder-field"><span>Proxies</span><GroupedResourceSelect groups={proxyGroups} items={proxies.map((proxy) => ({ id: proxy.id, groupId: proxy.groupId, name: proxy.name, detail: `${proxy.host}:${proxy.port}` }))} selectedId={form.proxyId} noun="proxy" emptyLabel="No proxies available" noSelectionLabel="Localhost (no proxy)" emptyOptionLabel="Localhost (no proxy)" onChange={(proxyId) => onChange("proxyId", proxyId)} /></div>
     </div>
     <div className="task-builder-section-head"><div><b>Options</b></div></div>
     <div className="task-builder-grid task-toggle-grid">
-      <label className="task-option-card compact"><input type="checkbox" checked={form.autoApplyMonitorSignal} onChange={(event) => setForm({ ...form, autoApplyMonitorSignal: event.target.checked })} /><span><b>Auto-apply match</b><small>Use exact matches automatically.</small></span><i className="task-switch" /></label>
-      <label className="task-option-card compact"><input type="checkbox" checked={form.waitForQueue} onChange={(event) => setForm({ ...form, waitForQueue: event.target.checked })} /><span><b>Wait for queue</b><small>Check queue status automatically.</small></span><i className="task-switch" /></label>
-      <label className="task-option-card compact"><input type="checkbox" checked={form.loopProfiles} onChange={(event) => setForm({ ...form, loopProfiles: event.target.checked, offerProfileFallback: event.target.checked })} /><span><b>Loop profiles</b><small>Try the next profile after a decline.</small></span><i className="task-switch" /></label>
+      <label className="task-option-card compact"><input type="checkbox" checked={form.autoApplyMonitorSignal} onChange={(event) => onChange("autoApplyMonitorSignal", event.target.checked)} /><span><b>Auto-apply match</b><small>Use exact matches automatically.</small></span><i className="task-switch" /></label>
+      <label className="task-option-card compact"><input type="checkbox" checked={form.waitForQueue} onChange={(event) => onChange("waitForQueue", event.target.checked)} /><span><b>Wait for queue</b><small>Check queue status automatically.</small></span><i className="task-switch" /></label>
+      <label className="task-option-card compact"><input type="checkbox" checked={form.loopProfiles} onChange={(event) => onChange("loopProfiles", event.target.checked)} /><span><b>Loop profiles</b><small>Try the next profile after a decline.</small></span><i className="task-switch" /></label>
     </div>
   </section>;
-}
-
-function TaskEditOptionsLegacy({ form, setForm, profiles, proxies }: { form: TaskEditForm; setForm: (form: TaskEditForm) => void; profiles: Profile[]; proxies: ProxyConfig[] }) {
-  return <section className="task-builder-section"><div className="task-builder-section-head"><div><b>Queue & checkout</b><span>Timing, profile, and route</span></div><small>Task options</small></div><div className="task-builder-grid"><label className="task-option-card wide"><input type="checkbox" checked={form.waitForQueue} onChange={(event) => setForm({ ...form, waitForQueue: event.target.checked })} /><span><b>Track the official queue</b><small>Show position or estimated time and refresh periodically.</small></span><i className="task-switch" /></label><label className="task-builder-field"><span>Queue refresh</span><select disabled={!form.waitForQueue} value={form.queueCheckIntervalMinutes} onChange={(event) => setForm({ ...form, queueCheckIntervalMinutes: Number(event.target.value) })}><option value={2}>Every 2 minutes</option><option value={3}>Every 3 minutes</option><option value={5}>Every 5 minutes</option><option value={10}>Every 10 minutes</option></select></label><label className="task-builder-field"><span>Profile</span><select value={form.profileId} onChange={(event) => setForm({ ...form, profileId: event.target.value })}><option value="">No profile</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></label><label className="task-builder-field"><span>Network route</span><select value={form.proxyId} onChange={(event) => setForm({ ...form, proxyId: event.target.value })}><option value="">Localhost (no proxy)</option>{proxies.map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.name}</option>)}</select></label><label className="task-option-card compact"><input type="checkbox" checked={form.offerProfileFallback} onChange={(event) => setForm({ ...form, offerProfileFallback: event.target.checked })} /><span><b>Profile fallback</b><small>Offer another after a decline.</small></span><i className="task-switch" /></label><label className="task-option-card compact"><input type="checkbox" checked={form.offerProxyFallback} onChange={(event) => setForm({ ...form, offerProxyFallback: event.target.checked })} /><span><b>Route fallback</b><small>Offer another after an error.</small></span><i className="task-switch" /></label></div></section>;
 }
 
 function TaskLogsModal({ task, onClose }: { task: Task; onClose: () => void }) {
@@ -644,6 +624,47 @@ function TaskForm({ profileGroups, profiles, proxyGroups, proxies, onCancel, onS
 }
 
 type GroupedResourceItem = { id: string; groupId?: string; name: string; detail: string };
+
+function GroupedResourceSelect({ groups, items, selectedId, noun, emptyLabel, noSelectionLabel, emptyOptionLabel, onChange }: { groups: ResourceGroup[]; items: GroupedResourceItem[]; selectedId: string; noun: string; emptyLabel: string; noSelectionLabel: string; emptyOptionLabel?: string; onChange: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<string[]>(() => {
+    const selected = items.find((item) => item.id === selectedId);
+    return selected?.groupId ? [selected.groupId] : [];
+  });
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+  const groupedItems = useMemo(() => {
+    const knownGroupIds = new Set(groups.map((group) => group.id));
+    const result = groups.map((group) => ({ ...group, items: items.filter((item) => item.groupId === group.id) }));
+    const ungrouped = items.filter((item) => !item.groupId || !knownGroupIds.has(item.groupId));
+    return ungrouped.length ? [...result, { id: "__ungrouped", name: "Ungrouped", items: ungrouped }] : result;
+  }, [groups, items]);
+  const selected = items.find((item) => item.id === selectedId);
+  const pluralNoun = noun === "proxy" ? "proxies" : `${noun}s`;
+  const select = (id: string) => { onChange(id); setOpen(false); };
+  const toggleExpanded = (id: string) => setExpandedIds((current) => current.includes(id) ? current.filter((groupId) => groupId !== id) : [...current, id]);
+  return <div className={`profile-multi-select ${open ? "open" : ""}`} ref={root}>
+    <button type="button" className="profile-multi-trigger" aria-haspopup="listbox" aria-expanded={open} disabled={!items.length && !emptyOptionLabel} onClick={() => setOpen((value) => !value)}><span>{items.length || emptyOptionLabel ? selected?.name ?? noSelectionLabel : emptyLabel}</span><ChevronDown size={14} /></button>
+    {open && <div className="profile-multi-menu grouped-resource-menu" role="listbox" aria-multiselectable="false">{emptyOptionLabel && <button type="button" role="option" aria-selected={!selectedId} className={`resource-localhost-option ${selectedId ? "" : "selected"}`} onClick={() => select("")}><span><b>{emptyOptionLabel}</b><small>{noun === "proxy" ? "Use this computer's connection" : "Leave this task unassigned"}</small></span>{!selectedId && <Check size={13} />}</button>}<div className="profile-multi-actions"><span>{groupedItems.length} {groupedItems.length === 1 ? "group" : "groups"}</span><button type="button" disabled={!selectedId} onClick={() => select("")}>Clear</button></div><div className="resource-group-list">{groupedItems.map((group) => {
+      const expanded = expandedIds.includes(group.id);
+      const selectedCount = group.items.some((item) => item.id === selectedId) ? 1 : 0;
+      return <div className={`resource-picker-group ${expanded ? "expanded" : ""}`} key={group.id}><div className="resource-picker-group-head"><button type="button" className="resource-group-select resource-group-summary" aria-expanded={expanded} onClick={() => toggleExpanded(group.id)}><span><b>{group.name}</b><small>{selectedCount ? "1 selected" : `${group.items.length} ${group.items.length === 1 ? noun : pluralNoun}`}</small></span></button><button type="button" className="resource-group-expand" aria-label={`${expanded ? "Hide" : "Show"} ${pluralNoun} in ${group.name}`} aria-expanded={expanded} onClick={() => toggleExpanded(group.id)}><ChevronRight size={13} /></button></div>{expanded && <VirtualResourceSingleOptions items={group.items} selectedId={selectedId} noun={noun} onSelect={select} />}</div>;
+    })}</div></div>}
+  </div>;
+}
+
+function VirtualResourceSingleOptions({ items, selectedId, noun, onSelect }: { items: GroupedResourceItem[]; selectedId: string; noun: string; onSelect: (id: string) => void }) {
+  const [scrollTop, setScrollTop] = useState(0);
+  const rowHeight = 43;
+  const viewportHeight = Math.min(176, Math.max(rowHeight, items.length * rowHeight));
+  const start = Math.max(0, Math.floor(scrollTop / rowHeight) - 3);
+  const end = Math.min(items.length, Math.ceil((scrollTop + viewportHeight) / rowHeight) + 3);
+  return <div className="profile-multi-options virtual-resource-options" style={{ height: viewportHeight }} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}><div className="virtual-resource-spacer" style={{ height: items.length * rowHeight }}><div className="virtual-resource-window" style={{ transform: `translateY(${start * rowHeight}px)` }}>{items.slice(start, end).map((item) => <label key={item.id} className={selectedId === item.id ? "selected" : ""}><input type="radio" name={`task-edit-${noun}`} checked={selectedId === item.id} onChange={() => onSelect(item.id)} /><span><b>{item.name}</b><small>{item.detail}</small></span><Check size={13} /></label>)}</div></div></div>;
+}
 
 function GroupedResourceMultiSelect({ groups, items, selectedIds, noun, emptyLabel, noSelectionLabel, emptyOptionLabel, onChange }: { groups: ResourceGroup[]; items: GroupedResourceItem[]; selectedIds: string[]; noun: string; emptyLabel: string; noSelectionLabel: string; emptyOptionLabel?: string; onChange: (ids: string[]) => void }) {
   const [open, setOpen] = useState(false);

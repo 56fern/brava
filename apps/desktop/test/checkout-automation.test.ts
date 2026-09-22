@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAddToCartScript,
+  buildCaptchaDetectionScript,
   buildCheckoutFields,
   buildFillFieldsScript,
   buildProductPageScript,
@@ -48,6 +49,7 @@ describe("checkout scripts", () => {
     for (const source of [
       buildProductPageScript("Blue / L", 2),
       buildAddToCartScript(),
+      buildCaptchaDetectionScript(),
       buildSubmitOrderScript(),
       buildFillFieldsScript(buildCheckoutFields({ id: "p", groupId: "g", name: "n", email: "e@e.com", firstName: "a", lastName: "b", address1: "x", address2: "", city: "c", region: "NY", postalCode: "1", country: "US", phone: "5" })),
     ]) {
@@ -69,16 +71,17 @@ describe("CheckoutAutomation engine", () => {
 
   it("completes checkout and reports the order number", async () => {
     const calls: string[] = [];
+    let submitted = false;
     const webContents = {
       executeJavaScript: async (script: string) => {
         if (script.includes("document.body?.innerText")) return "Thank you for your order! Order Number: PC-998877 Order Total $54.99";
-        if (script.includes("place your order")) { calls.push("submit"); return { clicked: true }; }
+        if (script.includes("place your order")) { calls.push("submit"); submitted = true; return { clicked: true }; }
         if (script.includes("add to cart") || script.includes("view cart")) { calls.push("cart"); return { clicked: true }; }
         if (script.includes("document.querySelector")) { calls.push("fill"); return { filled: ["First name"], missing: [] }; }
         calls.push("variant"); return { variant: "Blue / L", quantity: "2" };
       },
-      getURL: () => "https://www.pokemoncenter.com/confirmation",
-      getTitle: () => "Thank You",
+      getURL: () => submitted ? "https://www.pokemoncenter.com/confirmation" : "https://www.pokemoncenter.com/product/x",
+      getTitle: () => submitted ? "Thank You" : "Product",
     };
     const automation = new CheckoutAutomation(noSleep);
     const outcome = await automation.run(task as never, profile as never, webContents);
@@ -90,12 +93,33 @@ describe("CheckoutAutomation engine", () => {
 
   it("declines without ordering when add-to-cart is missing", async () => {
     const webContents = {
-      executeJavaScript: async () => ({ clicked: false }),
+      executeJavaScript: async (script: string) => {
+        if (script.includes("challenges.cloudflare")) return { detected: false };
+        if (script.includes("const plan =")) return { filled: [], missing: ["First name"] };
+        return { clicked: false };
+      },
       getURL: () => "https://www.pokemoncenter.com/product/x",
       getTitle: () => "Product",
     };
     const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);
     expect(outcome.status).toBe("declined");
     expect(outcome.status === "declined" && outcome.message).toContain("add-to-cart");
+  });
+
+  it("pauses only when the live page actually exposes a CAPTCHA", async () => {
+    const calls: string[] = [];
+    const challengeUrl = "https://www.pokemoncenter.com/challenge/checkout";
+    const webContents = {
+      executeJavaScript: async (script: string) => {
+        if (script.includes("challenges.cloudflare")) return { detected: true, url: challengeUrl };
+        calls.push(script);
+        return { clicked: false };
+      },
+      getURL: () => challengeUrl,
+      getTitle: () => "Security check",
+    };
+    const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);
+    expect(outcome).toMatchObject({ status: "captcha", challengeUrl });
+    expect(calls).toHaveLength(0);
   });
 });

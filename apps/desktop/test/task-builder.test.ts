@@ -26,9 +26,9 @@ describe("task builder batches", () => {
 
   it("maps one combined input to either SKU or product URL", () => {
     const [skuTask] = createTaskBatch({ ...input, profileIds: [], batchQuantity: 1 }, () => "sku-task");
-    const [urlTask] = createTaskBatch({ ...input, productInput: "https://www.pokemoncenter.com/product/example", profileIds: [], batchQuantity: 1 }, () => "url-task");
+    const [urlTask] = createTaskBatch({ ...input, productInput: "https://www.pokemoncenter.com/product/10-10608-101/card-sleeves", profileIds: [], batchQuantity: 1 }, () => "url-task");
     expect(skuTask).toMatchObject({ name: "10-12345-678", sku: "10-12345-678", productUrl: "", profileId: "" });
-    expect(urlTask).toMatchObject({ name: "https://www.pokemoncenter.com/product/example", sku: "", productUrl: "https://www.pokemoncenter.com/product/example", profileId: "" });
+    expect(urlTask).toMatchObject({ name: "https://www.pokemoncenter.com/product/10-10608-101/card-sleeves", sku: "10-10608-101", productUrl: "https://www.pokemoncenter.com/product/10-10608-101/card-sleeves", profileId: "" });
   });
 
   it("keeps queue refresh automatic and creates idle tasks", () => {

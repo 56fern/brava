@@ -33,7 +33,7 @@ describe("task operations table", () => {
     expect(app).toContain("site={selectedGroup?.site}");
     expect(styles).toContain("grid-template-columns: 240px minmax(0,1fr)");
     expect(styles).toMatch(/\.task-group-list\s*\{[^}]*overflow-x:\s*hidden/s);
-    expect(styles).toMatch(/@media \(max-width:\s*1380px\)[\s\S]*?\.task-columns > :nth-child\(4\)\s*\{[^}]*display:\s*none/);
+    expect(styles).toContain(".task-columns.manager-row > .task-proxy-cell");
     expect(styles).toMatch(/@media \(max-width:\s*1080px\)[\s\S]*?\.task-columns > :nth-child\(6\)\s*\{[^}]*display:\s*none/);
     expect(styles).toContain(".task-group-button .site-orb");
   });
@@ -55,7 +55,8 @@ describe("task operations table", () => {
     expect(app).toContain("const taskRowHeight = 72");
     expect(app).toContain('className="task-proxy-cell"');
     expect(app).toContain("task-loop-cell");
-    expect(styles).toMatch(/@media \(max-width: 1380px\)[\s\S]*?\.task-columns > :nth-child\(4\)\s*\{[^}]*display:\s*none !important/s);
+    expect(app).toContain("<b>{proxyGroup}</b><small>{proxy?.name ?? \"No proxy\"}</small>");
+    expect(styles).toMatch(/\.task-columns\.manager-row > \.task-proxy-cell\s*\{[^}]*display:\s*flex !important/s);
     expect(styles).toMatch(/@media \(max-width: 1080px\)[\s\S]*?\.task-columns > :nth-child\(6\)\s*\{[^}]*display:\s*none !important/s);
     expect(styles).toMatch(/html\[data-theme="light"\] \.task-row-context-shell\.context-selected > \.manager-row\s*\{[^}]*background:\s*linear-gradient\(90deg, #eaf5ff, #ffffff\)/s);
     expect(styles).toMatch(/\.virtual-task-rows\s*\{[^}]*padding:\s*7px 5px 5px/s);
