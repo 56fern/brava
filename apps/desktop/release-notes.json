@@ -1,19 +1,20 @@
 {
-  "version": "0.52.3",
-  "title": "Task Mode and Product Link Fix",
+  "version": "0.52.4",
+  "title": "Checkout Form Readiness Fix",
   "sections": [
     {
       "name": "Checkout",
       "items": [
-        "Checkout now repairs incomplete Pokémon Center links and opens the exact SKU product page.",
-        "A reused harvester only keeps its current product page when that page matches the task SKU."
+        "Brava now waits for delayed cart and checkout controls instead of treating them as missing profile details.",
+        "Multi-step checkout navigation now continues through cart, shipping, payment, and review pages.",
+        "State, region, and country fields are now filled from the assigned profile."
       ]
     },
     {
-      "name": "Webhooks",
+      "name": "CAPTCHA",
       "items": [
-        "The Mode field now reflects the task's actual mode.",
-        "Product links now use the corrected SKU-bearing Pokémon Center URL."
+        "Checkout resumes from the exact paused step after a CAPTCHA is solved.",
+        "Add to Cart and Place Order controls are never clicked twice during retries."
       ]
     }
   ],
