@@ -3,6 +3,7 @@ import {
   buildAddToCartScript,
   buildCaptchaDetectionScript,
   buildCheckoutPageStateScript,
+  buildCheckoutErrorScript,
   buildFillFieldsScript,
   buildGuestCheckoutScript,
   buildOpenCartScript,
@@ -41,6 +42,7 @@ export type CheckoutOutcome =
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const pollAttempts = 40;
 const pollIntervalMs = 300;
+const requiredPaymentLabels = ["Card number", "Card expiry month", "Card expiry year", "Security code"];
 type ClickResult = { clicked?: boolean; candidates?: unknown } | null;
 
 /**
@@ -114,6 +116,16 @@ export class CheckoutAutomation {
 
   private pageContext(webContents: CheckoutWebContents): string {
     return `${webContents.getTitle() || "Untitled page"} at ${webContents.getURL() || "an unknown URL"}`;
+  }
+
+  private async siteErrors(webContents: CheckoutWebContents, signal?: AbortSignal): Promise<string[]> {
+    this.assertRunning(signal);
+    try {
+      const messages = await webContents.executeJavaScript(buildCheckoutErrorScript(), true);
+      return Array.isArray(messages) ? messages.filter((item): item is string => typeof item === "string").slice(0, 3) : [];
+    } catch {
+      return [];
+    }
   }
 
   private async confirmation(webContents: CheckoutWebContents, signal?: AbortSignal): Promise<Extract<CheckoutOutcome, { status: "completed" }> | null> {
@@ -214,7 +226,7 @@ export class CheckoutAutomation {
 
     if (stage === "payment") {
       const fields = buildPaymentFields(profile);
-      if (!fields.some((field) => field.label === "Card number")) return { status: "declined", message: "The assigned profile has no complete payment card. Nothing was ordered." };
+      if (requiredPaymentLabels.some((label) => !fields.some((field) => field.label === label))) return { status: "declined", message: "The assigned profile has no complete payment card. Nothing was ordered." };
       const payment = splitPaymentFields(fields);
       let methodReady = payment.method.length === 0;
       let missing = payment.details.map((field) => field.label);
@@ -235,20 +247,28 @@ export class CheckoutAutomation {
         const filled = await this.readFields(webContents, payment.details, signal);
         missing = filled.missing;
         fieldErrors = filled.errors;
-        await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
+        // Never advance to review when a required card control was not found.
+        // A review page can render despite missing hosted-card values and only
+        // reject the order after the irreversible Place Order click.
+        if (requiredPaymentLabels.every((label) => filled.filled.includes(label))) {
+          await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
+        }
         await this.wait(pollIntervalMs, signal);
       }
-      if (stage === "payment") return { status: "declined", message: `Payment could not continue after waiting on ${this.pageContext(webContents)}. Fields not found: ${missing.join(", ") || "none; check the page validation message"}.${fieldErrors.length ? ` Frame diagnostics: ${fieldErrors.join(" | ")}` : ""} Nothing was ordered.` };
+      if (stage === "payment") {
+        const siteErrors = await this.siteErrors(webContents, signal);
+        return { status: "declined", message: `Payment could not continue after waiting on ${this.pageContext(webContents)}. Fields not found: ${missing.join(", ") || "none; check the page validation message"}.${siteErrors.length ? ` Site error: ${siteErrors.join(" | ")}.` : ""}${fieldErrors.length ? ` Frame diagnostics: ${fieldErrors.join(" | ")}` : ""} Nothing was ordered.` };
+      }
     }
 
     if (stage === "review") {
       let submitted = false;
       for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
         this.assertRunning(signal);
-        const captcha = await this.captcha(webContents, "review", signal);
-        if (captcha) return captcha;
         const existingConfirmation = await this.confirmation(webContents, signal);
         if (existingConfirmation) return existingConfirmation;
+        const captcha = await this.captcha(webContents, "review", signal);
+        if (captcha) return captcha;
         const submit = (await webContents.executeJavaScript(buildSubmitOrderScript(), true)) as ClickResult;
         if (submit?.clicked) { submitted = true; stage = "confirmation"; break; }
         await this.wait(pollIntervalMs, signal);
@@ -256,14 +276,17 @@ export class CheckoutAutomation {
       if (!submitted) return { status: "declined", message: `Place Order did not appear after waiting on ${this.pageContext(webContents)}. Nothing was ordered.` };
     }
 
+    let lastSiteErrors: string[] = [];
     for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
       this.assertRunning(signal);
-      const captcha = await this.captcha(webContents, "confirmation", signal);
-      if (captcha) return captcha;
       const confirmation = await this.confirmation(webContents, signal);
       if (confirmation) return confirmation;
+      const captcha = await this.captcha(webContents, "confirmation", signal);
+      if (captcha) return captcha;
+      const siteErrors = await this.siteErrors(webContents, signal);
+      if (siteErrors.length) lastSiteErrors = siteErrors;
       await this.wait(pollIntervalMs, signal);
     }
-    return { status: "declined", message: `Place Order was clicked once, but no confirmation appeared after waiting on ${this.pageContext(webContents)}. Verify the order before retrying.` };
+    return { status: "declined", message: `Place Order was clicked once, but no confirmation appeared after waiting on ${this.pageContext(webContents)}.${lastSiteErrors.length ? ` Site error: ${lastSiteErrors.join(" | ")}.` : ""} Verify the order before retrying.` };
   }
 }

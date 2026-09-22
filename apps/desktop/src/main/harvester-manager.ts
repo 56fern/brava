@@ -6,7 +6,7 @@ import type { AppStore } from "./store.js";
 import { CheckoutAutomation } from "./checkout-automation.js";
 import type { CheckoutOutcome } from "./checkout-automation.js";
 import type { Harvester, HarvesterStatus, Task } from "../shared/types.js";
-import { buildCheckoutFields } from "../shared/checkout-scripts.js";
+import { buildCaptchaDetectionScript, buildCheckoutFields } from "../shared/checkout-scripts.js";
 import { parseHarvesterProxy } from "../shared/harvester-proxy.js";
 import { isPokemonCenterProductUrlForSku, resolvePokemonCenterProductUrl } from "../shared/product-input.js";
 import { isPokemonCenterQueuePage, type QueueGateOutcome, type QueueGateUpdate } from "./queue-gate.js";
@@ -36,12 +36,12 @@ const challengeOnlyCss = `
     background: #080d15;
     font: 600 14px system-ui, sans-serif;
   }
-  body:has(iframe[src*="hcaptcha"], iframe[title*="hCaptcha"], .h-captcha, [data-sitekey])::before { display: none !important; }
-  iframe[src*="hcaptcha"], iframe[title*="hCaptcha"], .h-captcha, [data-sitekey],
-  iframe[src*="hcaptcha"] *, iframe[title*="hCaptcha"] *, .h-captcha *, [data-sitekey] * {
+  body:has(iframe[src*="/bframe"], iframe[title*="reCAPTCHA challenge"], iframe[title*="hCaptcha challenge"], .h-captcha, .g-recaptcha, .cf-turnstile, #challenge-stage)::before { display: none !important; }
+  iframe[src*="/bframe"], iframe[title*="reCAPTCHA challenge"], iframe[title*="hCaptcha challenge"], .h-captcha, .g-recaptcha, .cf-turnstile, #challenge-stage,
+  iframe[src*="/bframe"] *, iframe[title*="reCAPTCHA challenge"] *, iframe[title*="hCaptcha challenge"] *, .h-captcha *, .g-recaptcha *, .cf-turnstile *, #challenge-stage * {
     visibility: visible !important;
   }
-  iframe[src*="hcaptcha"], iframe[title*="hCaptcha"], .h-captcha, [data-sitekey] {
+  iframe[src*="/bframe"], iframe[title*="reCAPTCHA challenge"], iframe[title*="hCaptcha challenge"], .h-captcha, .g-recaptcha, .cf-turnstile, #challenge-stage {
     position: fixed !important;
     inset: 0 !important;
     z-index: 2147483647 !important;
@@ -187,6 +187,7 @@ export class HarvesterManager {
 
   private async showWaiting(id: string, browser: BrowserWindow): Promise<void> {
     this.clearSolveWatcher(id);
+    browser.hide();
     await this.clearChallengeCss(id, browser);
     const harvester = (await this.store.load()).harvesters.find((item) => item.id === id);
     if (!harvester || browser.isDestroyed()) return;
@@ -196,8 +197,35 @@ export class HarvesterManager {
   private async showChallenge(id: string, browser: BrowserWindow, challengeUrl: string): Promise<void> {
     if (!permitsChallengeNavigation(challengeUrl)) throw new Error("The task did not provide a valid Pokémon Center CAPTCHA URL.");
     this.clearSolveWatcher(id);
+    browser.hide();
     await this.clearChallengeCss(id, browser);
-    if (!browser.isDestroyed()) await browser.loadURL(challengeUrl);
+    if (!browser.isDestroyed()) {
+      // An embedded CAPTCHA belongs to the live checkout DOM. Reloading the
+      // same URL destroys that challenge and can show only a reCAPTCHA badge.
+      if (browser.webContents.getURL() === challengeUrl) await this.revealChallenge(id, browser);
+      else await browser.loadURL(challengeUrl);
+    }
+  }
+
+  private async revealChallenge(id: string, browser: BrowserWindow): Promise<void> {
+    for (let attempt = 0; attempt < 10 && !browser.isDestroyed() && this.assignedChallengeUrls.has(id) && !this.activeCheckouts.has(id); attempt += 1) {
+      const result = await browser.webContents.executeJavaScript(buildCaptchaDetectionScript(), true).catch(() => null) as { detected?: boolean } | null;
+      if (result?.detected && !this.activeCheckouts.has(id)) {
+        await this.clearChallengeCss(id, browser);
+        const cssKey = await browser.webContents.insertCSS(challengeOnlyCss);
+        this.insertedCss.set(id, cssKey);
+        await this.update(id, "busy", "CAPTCHA ready · solve manually");
+        this.watchForSolvedChallenge(id, browser);
+        if (browser.isMinimized()) browser.restore();
+        browser.show();
+        browser.focus();
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    if (!browser.isDestroyed() && this.assignedChallengeUrls.has(id) && !this.activeCheckouts.has(id)) {
+      await this.update(id, "busy", "No CAPTCHA is visible · verify whether the order already went through before retrying");
+    }
   }
 
   private watchForSolvedChallenge(id: string, browser: BrowserWindow): void {
@@ -226,9 +254,13 @@ export class HarvesterManager {
   async open(id: string, tileIndex?: number): Promise<void> {
     const existing = this.windows.get(id);
     if (existing && !existing.isDestroyed()) {
-      if (existing.isMinimized()) existing.restore();
-      existing.show();
-      existing.focus();
+      // Opening an inbox must not expose the storefront, queue, or checkout.
+      // Only an assigned CAPTCHA may bring the harvester to the foreground.
+      if (this.assignedChallengeUrls.has(id) && this.insertedCss.has(id) && !this.activeCheckouts.has(id)) {
+        if (existing.isMinimized()) existing.restore();
+        existing.show();
+        existing.focus();
+      }
       const current = (await this.store.load()).harvesters.find((item) => item.id === id);
       if (current && !current.assignedRequestId && !current.assignedTaskId) await this.onAvailable?.(id);
       return;
@@ -257,6 +289,7 @@ export class HarvesterManager {
       skipTaskbar: false,
       show: false,
       webPreferences: {
+        backgroundThrottling: false,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: false,
@@ -283,9 +316,9 @@ export class HarvesterManager {
       browser.setTitle(`Brava Harvester · ${harvester.name}`);
     });
     browser.webContents.on("did-finish-load", () => {
-      browser.show();
       void (async () => {
         if (this.activeCheckouts.has(id)) {
+          browser.hide();
           await this.clearChallengeCss(id, browser);
           return;
         }
@@ -296,11 +329,7 @@ export class HarvesterManager {
             await this.showWaiting(id, browser);
             return;
           }
-          await this.clearChallengeCss(id, browser);
-          const cssKey = await browser.webContents.insertCSS(challengeOnlyCss);
-          this.insertedCss.set(id, cssKey);
-          await this.update(id, "busy", "CAPTCHA ready · solve manually");
-          this.watchForSolvedChallenge(id, browser);
+          await this.revealChallenge(id, browser);
           return;
         }
         const latest = (await this.store.load()).harvesters.find((item) => item.id === id);
@@ -357,8 +386,6 @@ export class HarvesterManager {
       return;
     }
     await this.showChallenge(id, browser, challengeUrl);
-    browser.show();
-    browser.focus();
   }
 
   async testCaptcha(id: string): Promise<void> {
@@ -401,6 +428,7 @@ export class HarvesterManager {
     const browser = this.windows.get(id);
     if (!browser || browser.isDestroyed()) return { status: "failed", message: "The harvester window closed before queue monitoring could start." };
     this.clearSolveWatcher(id);
+    browser.hide();
     await this.clearChallengeCss(id, browser);
     this.activeCheckouts.add(id);
     await this.update(id, "busy", "Monitoring for the Pokémon Center queue", { assignedTaskId: task.id });
@@ -456,10 +484,8 @@ export class HarvesterManager {
   }
 
   /**
-   * Hands-free checkout: lift the CAPTCHA cocoon, make sure the window is on the
-   * product page, drive add-to-cart → autofill → place-order, then release the
-   * harvester. The window stays on the live page so a human can take over if the
-   * automation declines.
+   * Hands-free checkout in the hidden harvester session. The window becomes
+   * visible only if a real CAPTCHA needs manual intervention.
    */
   async runCheckout(id: string, task: Task, profile: Parameters<typeof buildCheckoutFields>[0], signal?: AbortSignal): Promise<CheckoutOutcome> {
     const browser = this.windows.get(id);
@@ -468,6 +494,7 @@ export class HarvesterManager {
     }
     if (signal?.aborted) return { status: "cancelled", message: "Checkout stopped by user" };
     this.clearSolveWatcher(id);
+    browser.hide();
     await this.clearChallengeCss(id, browser);
     this.activeCheckouts.add(id);
     await this.update(id, "busy", "Automatic checkout running", { assignedTaskId: task.id });
@@ -495,9 +522,9 @@ export class HarvesterManager {
       this.activeCheckouts.delete(id);
     }
     const assigned = this.assignedChallengeUrls.get(id);
-    await this.update(id, browser.isDestroyed() ? "closed" : "open", outcome.status === "completed" ? `Checkout complete · ${outcome.message}` : outcome.status === "captcha" ? "CAPTCHA detected · waiting for the user" : outcome.status === "cancelled" ? "Checkout stopped" : "Checkout paused · continue manually", { assignedRequestId: undefined, assignedTaskId: undefined });
+    await this.update(id, browser.isDestroyed() ? "closed" : "open", outcome.status === "completed" ? `Checkout complete · ${outcome.message}` : outcome.status === "captcha" ? "CAPTCHA detected · waiting for the user" : outcome.status === "cancelled" ? "Checkout stopped" : "Checkout ended · check task logs", { assignedRequestId: undefined, assignedTaskId: undefined });
     if (assigned && outcome.status !== "captcha") this.assignedChallengeUrls.delete(id);
-    if (!browser.isDestroyed() && (outcome.status === "cancelled" || (assigned && outcome.status !== "captcha"))) await this.showWaiting(id, browser).catch(() => undefined);
+    if (!browser.isDestroyed() && outcome.status !== "captcha") await this.showWaiting(id, browser).catch(() => undefined);
     return outcome.status === "captcha" ? { ...outcome, harvesterId: id } : outcome;
   }
 

@@ -42,6 +42,8 @@ describe("harvester window layout", () => {
     expect(manager).not.toContain("parent: this.mainWindow()");
     expect(manager).not.toContain('<div class="mark">◇</div>');
     expect(manager).toContain("challengeOnlyCss");
+    expect(manager).toContain("backgroundThrottling: false");
+    expect(manager.match(/browser\.show\(\)/g)).toHaveLength(1);
     expect(manager).toContain("watchForSolvedChallenge");
     expect(manager).toContain("await browser.loadURL(waitingPage(harvester.name))");
     expect(manager).not.toContain("officialStartUrl");
@@ -83,5 +85,67 @@ const manager = await readFile(new URL("../src/main/harvester-manager.ts", impor
     expect(manager).toContain("app.isPackaged");
     expect(manager).toContain("join(process.resourcesPath");
     expect(manager).toContain("../../build/icon-large-v3.png");
+  });
+
+  it("keeps checkout and the idle inbox hidden instead of exposing task pages", async () => {
+    const { HarvesterManager } = await import("../src/main/harvester-manager.js");
+    const calls: string[] = [];
+    const harvester = { id: "h1", name: "Harvester 1", status: "open", statusMessage: "Waiting", proxy: "" };
+    const store = {
+      load: async () => ({ harvesters: [harvester] }),
+      updateHarvester: async (_id: string, mutate: (value: typeof harvester) => void) => { mutate(harvester); return harvester; },
+    };
+    const browser = {
+      isDestroyed: () => false,
+      hide: () => calls.push("hide"),
+      show: () => calls.push("show"),
+      loadURL: async () => { calls.push("waiting page"); },
+      webContents: {
+        getURL: () => "https://www.pokemoncenter.com/product/10-10608-101",
+        executeJavaScript: async () => true,
+        loadURL: async () => { calls.push("product page"); },
+        stop: () => undefined,
+      },
+    };
+    const checkout = { run: async () => ({ status: "declined", message: "Site error" }) };
+    const manager = new HarvesterManager(store as never, () => null, checkout as never);
+    (manager as unknown as { windows: Map<string, unknown> }).windows.set("h1", browser);
+
+    const outcome = await manager.runCheckout("h1", { id: "t1", name: "Sleeves", sku: "10-10608-101", productUrl: "https://www.pokemoncenter.com/product/10-10608-101" } as never, {} as never);
+    expect(outcome.status).toBe("declined");
+    expect(calls).toContain("hide");
+    expect(calls).toContain("waiting page");
+    expect(calls).not.toContain("show");
+  });
+
+  it("reveals a live CAPTCHA without reloading and losing its checkout session", async () => {
+    const { HarvesterManager } = await import("../src/main/harvester-manager.js");
+    const calls: string[] = [];
+    const challengeUrl = "https://www.pokemoncenter.com/checkout/review";
+    const harvester = { id: "h1", name: "Harvester 1", status: "open", statusMessage: "Waiting", proxy: "" };
+    const store = {
+      load: async () => ({ harvesters: [harvester] }),
+      updateHarvester: async (_id: string, mutate: (value: typeof harvester) => void) => { mutate(harvester); return harvester; },
+    };
+    const browser = {
+      isDestroyed: () => false,
+      isMinimized: () => false,
+      hide: () => calls.push("hide"),
+      show: () => calls.push("show"),
+      focus: () => calls.push("focus"),
+      loadURL: async () => { calls.push("reload"); },
+      webContents: {
+        getURL: () => challengeUrl,
+        executeJavaScript: async () => ({ detected: true }),
+        insertCSS: async () => "challenge-css",
+        removeInsertedCSS: async () => undefined,
+      },
+    };
+    const manager = new HarvesterManager(store as never, () => null);
+    (manager as unknown as { windows: Map<string, unknown> }).windows.set("h1", browser);
+
+    await manager.assign("h1", "c1", "t1", "Sleeves", challengeUrl);
+    expect(calls).toEqual(["hide", "show", "focus"]);
+    await manager.release("h1", "Done");
   });
 });

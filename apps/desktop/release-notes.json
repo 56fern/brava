@@ -1,13 +1,20 @@
 {
-  "version": "0.52.12",
-  "title": "Hosted Payment Frame Fix",
+  "version": "0.52.13",
+  "title": "Hidden Checkout and CAPTCHA Safety",
   "sections": [
     {
       "name": "Automatic checkout",
       "items": [
-        "Card selectors can no longer mistake a hosted payment iframe for a writable input.",
-        "Brava now discovers and fills card controls across every Electron checkout frame, including cross-origin provider frames.",
-        "Frame failures are isolated so one detached frame cannot stop checkout, and task logs include frame diagnostics if fields remain unavailable."
+        "The checkout and queue run with the task browser hidden; harvesters appear only for a detected CAPTCHA.",
+        "An ordinary reCAPTCHA badge no longer creates a false Needs You alert, and an actual embedded challenge is shown without reloading its live page.",
+        "Brava checks for order confirmation before looking for a post-submit CAPTCHA and never advances payment when required card controls are missing.",
+        "If the store rejects Place Order, task logs include the visible site error and warn you to verify the order before retrying."
+      ]
+    },
+    {
+      "name": "Known limitation",
+      "items": [
+        "A generic Pokémon Center error after Place Order does not prove that the order failed. Check your email or account before another attempt."
       ]
     }
   ],

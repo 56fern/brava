@@ -365,21 +365,45 @@ export function buildSubmitOrderScript(): string {
 })()`;
 }
 
+/** Return only short, visible checkout validation messages; never read form values. */
+export function buildCheckoutErrorScript(): string {
+  return `(() => {
+  const selectors = ['[role="alert"]', '[aria-live="assertive"]', '.error', '.error-message', '.field-error', '.form-error', '.alert-danger', '[class*="error-message" i]', '[class*="validation-message" i]'];
+  const messages = [...document.querySelectorAll(selectors.join(','))]
+    .filter((element) => element.offsetParent !== null)
+    .map((element) => (element.innerText || element.textContent || '').replace(/\\s+/g, ' ').trim())
+    .filter((message) => message && message.length <= 240)
+    .filter((message) => /error|invalid|declin|failed|cannot|can't|unable|try again|required|empty|problem/i.test(message))
+    .map((message) => message
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi, '[email]')
+      .replace(/(?:\\d[ -]?){8,}/g, '[number]')
+      .slice(0, 180));
+  return [...new Set(messages)].slice(0, 3);
+})()`;
+}
+
 /** Detects a CAPTCHA that is actually present on the current checkout page. */
 export function buildCaptchaDetectionScript(): string {
   return `(() => {
   const selectors = [
-    'iframe[src*="hcaptcha" i]',
-    'iframe[title*="hcaptcha" i]',
-    'iframe[src*="recaptcha" i]',
+    'iframe[src*="/bframe" i]',
+    'iframe[title*="recaptcha challenge" i]',
+    'iframe[title*="hcaptcha challenge" i]',
     'iframe[src*="challenges.cloudflare" i]',
     '.h-captcha',
     '.g-recaptcha',
     '.cf-turnstile',
-    '[data-sitekey]',
     '#challenge-stage'
   ];
-  const element = selectors.map((selector) => document.querySelector(selector)).find(Boolean);
+  const visible = (element) => {
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+  };
+  // A reCAPTCHA badge/anchor is present on ordinary checkout pages and even
+  // after an order. It is not a challenge that needs the user's attention.
+  const element = selectors.map((selector) => document.querySelector(selector)).find(visible);
   const pageSignal = /captcha|verify you are human|security check|just a moment/i.test(document.title || '')
     || /captcha|challenge/.test(location.pathname.toLowerCase());
   return { detected: Boolean(element || pageSignal), url: location.href };
