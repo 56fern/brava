@@ -58,7 +58,7 @@ export type ProxyTestTarget = "pokemon_center" | "google" | "cloudflare";
 
 export type ResourceGroup = { id: string; name: string };
 
-export type TaskStatus = "idle" | "queued" | "monitoring" | "found" | "adding_to_cart" | "carted" | "awaiting_user" | "completed" | "declined" | "stopped" | "error";
+export type TaskStatus = "idle" | "queued" | "monitoring" | "found" | "adding_to_cart" | "submitting_order" | "carted" | "awaiting_user" | "completed" | "declined" | "stopped" | "error";
 export type CheckoutStage =
   | "product"
   | "cart"

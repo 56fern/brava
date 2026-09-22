@@ -1,20 +1,19 @@
 {
-  "version": "0.52.13",
-  "title": "Hidden Checkout and CAPTCHA Safety",
+  "version": "0.52.14",
+  "title": "Fresh Cart and Submission Status",
   "sections": [
     {
-      "name": "Automatic checkout",
+      "name": "Task sessions",
       "items": [
-        "The checkout and queue run with the task browser hidden; harvesters appear only for a detected CAPTCHA.",
-        "An ordinary reCAPTCHA badge no longer creates a false Needs You alert, and an actual embedded challenge is shown without reloading its live page.",
-        "Brava checks for order confirmation before looking for a post-submit CAPTCHA and never advances payment when required card controls are missing.",
-        "If the store rejects Place Order, task logs include the visible site error and warn you to verify the order before retrying."
+        "Starting a new task clears the selected harvester's old cart cookies, site storage, and cache before checkout or queue monitoring begins.",
+        "A queue pass or CAPTCHA resume keeps the current task's session, so it does not lose its place mid-checkout.",
+        "After Brava restarts, an old Needs You or Submitting order task becomes Stopped with a reminder to verify the order before starting again."
       ]
     },
     {
-      "name": "Known limitation",
+      "name": "Checkout progress",
       "items": [
-        "A generic Pokémon Center error after Place Order does not prove that the order failed. Check your email or account before another attempt."
+        "Tasks now show Submitting order after Place Order is clicked and before Checked out is confirmed."
       ]
     }
   ],

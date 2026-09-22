@@ -337,7 +337,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .task-log-row { min-height: 58px; display: grid; grid-template-columns: 14px minmax(0,1fr); gap: 10px; align-items: start; padding: 11px 10px; border-bottom: 1px solid #212731; }
 .task-log-row:last-child { border-bottom: 0; }
 .task-log-dot { width: 8px; height: 8px; margin-top: 4px; border: 2px solid #27303b; border-radius: 50%; background: #758198; box-shadow: 0 0 0 3px #75819818; }
-.task-log-dot.queued,.task-log-dot.monitoring,.task-log-dot.found,.task-log-dot.adding_to_cart { background: #6381ff; box-shadow: 0 0 0 3px #6381ff20; }
+.task-log-dot.queued,.task-log-dot.monitoring,.task-log-dot.found,.task-log-dot.adding_to_cart,.task-log-dot.submitting_order { background: #6381ff; box-shadow: 0 0 0 3px #6381ff20; }
 .task-log-dot.carted,.task-log-dot.awaiting_user { background: #f1b456; box-shadow: 0 0 0 3px #f1b45620; }
 .task-log-dot.completed { background: #4cd39a; box-shadow: 0 0 0 3px #4cd39a20; }
 .task-log-dot.declined,.task-log-dot.error { background: #ff6672; box-shadow: 0 0 0 3px #ff667220; }
@@ -377,7 +377,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 
 /* Queue-aware task workspace */
 .status.queued { color: #69bfff; border-color: #244560; }
-.status.adding_to_cart,.status.carted { color: #b79aff; border-color: #554080; }
+.status.adding_to_cart,.status.submitting_order,.status.carted { color: #b79aff; border-color: #554080; }
 .status.declined,.status.error { color: #ff6677; border-color: #69313a; }
 .task-columns { grid-template-columns: minmax(105px,1fr) minmax(135px,1.3fr) minmax(85px,.75fr) minmax(78px,.65fr) 105px 86px minmax(112px,auto); }
 .queue-cell { min-width: 0; }
@@ -1087,6 +1087,7 @@ html[data-theme="light"] .delete-confirm-card > p { color: #60748a; }
 html[data-theme="light"] .status.awaiting_user { color: #8a5600; border-color: #ddc28e; }
 html[data-theme="light"] .status.completed { color: #126c4d; border-color: #9bcdbb; }
 html[data-theme="light"] .status.adding_to_cart,
+html[data-theme="light"] .status.submitting_order,
 html[data-theme="light"] .status.carted { color: #6946a8; border-color: #c2b1df; }
 html[data-theme="light"] .status.declined,
 html[data-theme="light"] .status.error { color: #b42337; border-color: #e1a9b1; }
@@ -1354,3 +1355,5 @@ html[data-theme="light"] .task-status-cell.status.error { color: #c83045; }
   margin-block: 0;
   font-size: 27px;
 }
+.status-icon.submitting_order { color: #61b8ff; background: #142535; }
+.task-dot.submitting_order { background: #559eff; box-shadow: 0 0 9px #559eff; }

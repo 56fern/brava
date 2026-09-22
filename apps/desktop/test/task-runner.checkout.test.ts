@@ -87,6 +87,24 @@ describe("TaskRunner checkout automation", () => {
     expect(disk().tasks[0]).toMatchObject({ status: "completed", orderNumber: "ORDER-1", checkoutAmount: 42 });
   });
 
+  it("records Submitting order before Checked out and preserves the final result", async () => {
+    const { store, disk } = harness(checkoutTask());
+    const { TaskRunner } = await import("../src/main/task-runner.js");
+    const send = vi.fn();
+    const runner = new TaskRunner(store, () => ({ webContents: { send } }) as never);
+    runner.setCheckoutHandlers({ run: async () => {
+      await runner.markSubmittingOrder("test-task");
+      expect(disk().tasks[0]?.status).toBe("submitting_order");
+      return { status: "completed", message: "Order confirmed", orderNumber: "ORDER-2" };
+    } });
+
+    await runner.beginAutoCheckout("test-task", "harvester-1");
+
+    expect(disk().tasks[0]).toMatchObject({ status: "completed", orderNumber: "ORDER-2" });
+    expect(disk().tasks[0]?.history?.map((event) => event.status)).toEqual(["submitting_order", "completed"]);
+    expect(send).toHaveBeenCalledWith("task:update-batch", [expect.objectContaining({ status: "submitting_order" })]);
+  });
+
   it("ignores a legacy autoCheckout false value and still completes checkout", async () => {
     const legacyTask: Task & { autoCheckout: false } = { ...checkoutTask(), autoCheckout: false };
     const { store, disk } = harness(legacyTask);

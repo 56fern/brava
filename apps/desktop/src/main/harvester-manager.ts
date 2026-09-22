@@ -112,6 +112,7 @@ export class HarvesterManager {
   private onAvailable: ((id: string) => void | Promise<void>) | undefined;
   private onClosed: ((id: string, redistribute: boolean) => void | Promise<void>) | undefined;
   private onSolved: ((id: string) => void | Promise<void>) | undefined;
+  private onSubmittingOrder: ((taskId: string) => Promise<void>) | undefined;
 
   constructor(
     private readonly store: AppStore,
@@ -123,10 +124,12 @@ export class HarvesterManager {
     onAvailable?: (id: string) => void | Promise<void>;
     onClosed?: (id: string, redistribute: boolean) => void | Promise<void>;
     onSolved?: (id: string) => void | Promise<void>;
+    onSubmittingOrder?: (taskId: string) => Promise<void>;
   }): void {
     this.onAvailable = handlers.onAvailable;
     this.onClosed = handlers.onClosed;
     this.onSolved = handlers.onSolved;
+    this.onSubmittingOrder = handlers.onSubmittingOrder;
   }
 
   private async update(id: string, status: HarvesterStatus, statusMessage: string, patch: Partial<Harvester> = {}): Promise<void> {
@@ -415,12 +418,28 @@ export class HarvesterManager {
     await this.incrementSolved(id);
   }
 
+  /** A new task must not inherit the previous guest cart in this harvester. */
+  private async prepareFreshTaskSession(id: string): Promise<void> {
+    const browser = this.windows.get(id);
+    if (!browser || browser.isDestroyed()) throw new Error("The harvester closed before its cart could be cleared.");
+    // Navigate away first so the old checkout page cannot write its cart back
+    // while Electron clears cookies, storage, and cache for this partition.
+    await this.showWaiting(id, browser);
+    await browser.webContents.session.clearData();
+  }
+
   async waitForQueueOnAvailable(task: Task, signal: AbortSignal, onUpdate: (update: QueueGateUpdate) => void | Promise<void>): Promise<QueueGateOutcome> {
     const data = await this.store.load();
     const harvester = data.harvesters.find((item) => item.status !== "busy" && item.status !== "error" && !item.assignedRequestId && !item.assignedTaskId);
     if (!harvester) return { status: "failed", message: "No available harvester can monitor the Pokémon Center queue; open or create a harvester and restart the task." };
     await this.update(harvester.id, "busy", "Starting Pokémon Center queue monitoring", { assignedTaskId: task.id });
-    await this.open(harvester.id);
+    try {
+      await this.open(harvester.id);
+      await this.prepareFreshTaskSession(harvester.id);
+    } catch (error) {
+      await this.update(harvester.id, "error", "Could not clear the previous cart", { assignedTaskId: undefined });
+      return { status: "failed", message: `Queue monitoring did not start because the previous cart could not be cleared: ${error instanceof Error ? error.message : "unknown error"}` };
+    }
     return this.waitForQueue(harvester.id, task, signal, onUpdate);
   }
 
@@ -478,7 +497,13 @@ export class HarvesterManager {
       return { status: "declined", message: "No available harvester can run checkout; open or create a harvester and retry the task." };
     }
     await this.update(harvester.id, "busy", "Starting automatic checkout", { assignedTaskId: task.id });
-    await this.open(harvester.id);
+    try {
+      await this.open(harvester.id);
+      await this.prepareFreshTaskSession(harvester.id);
+    } catch (error) {
+      await this.update(harvester.id, "error", "Could not clear the previous cart", { assignedTaskId: undefined });
+      return { status: "declined", message: `Checkout did not start because the previous cart could not be cleared: ${error instanceof Error ? error.message : "unknown error"}. Nothing was ordered.` };
+    }
     const outcome = await this.runCheckout(harvester.id, task, profile, signal);
     return outcome.status === "captcha" ? { ...outcome, harvesterId: harvester.id } : outcome;
   }
@@ -512,7 +537,7 @@ export class HarvesterManager {
         if (signal?.aborted) throw new DOMException("Checkout stopped by user", "AbortError");
         await browser.webContents.executeJavaScript("document.readyState === 'complete' || new Promise((resolve) => addEventListener('load', resolve, { once: true }))", true).catch(() => undefined);
       }
-      outcome = await this.checkout.run(task, profile, browser.webContents, signal);
+      outcome = await this.checkout.run(task, profile, browser.webContents, signal, () => this.onSubmittingOrder?.(task.id) ?? Promise.resolve());
     } catch (error) {
       outcome = signal?.aborted || (error instanceof DOMException && error.name === "AbortError")
         ? { status: "cancelled", message: "Checkout stopped by user" }

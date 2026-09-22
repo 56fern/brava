@@ -282,6 +282,27 @@ describe("CheckoutAutomation engine", () => {
     expect(submitClicks).toBe(1);
   });
 
+  it("reports Submitting order only after Place Order is clicked", async () => {
+    const events: string[] = [];
+    let placed = false;
+    const webContents = {
+      executeJavaScript: async (script: string) => {
+        if (script.includes("challenges.cloudflare")) return { detected: false };
+        if (script.includes("document.body?.innerText")) return placed ? "Thank you for your order! Order Number: PC-123456" : "Review order";
+        if (script.includes("place your order")) { events.push("clicked"); placed = true; return { clicked: true }; }
+        return {};
+      },
+      getURL: () => placed ? "https://www.pokemoncenter.com/confirmation" : "https://www.pokemoncenter.com/checkout/review",
+      getTitle: () => placed ? "Thank You" : "Review Order",
+    };
+    const onSubmittingOrder = vi.fn(async () => { events.push("submitting"); });
+
+    const outcome = await new CheckoutAutomation(noSleep).run({ ...task, checkoutStage: "submit" } as never, profile as never, webContents, undefined, onSubmittingOrder);
+    expect(outcome.status).toBe("completed");
+    expect(events).toEqual(["clicked", "submitting"]);
+    expect(onSubmittingOrder).toHaveBeenCalledTimes(1);
+  });
+
   it("fills payment details across Electron child frames", async () => {
     const calls: string[] = [];
     let page: "payment" | "review" | "confirmation" = "payment";

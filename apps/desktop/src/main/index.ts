@@ -102,6 +102,7 @@ if (!hasSingleInstanceLock) {
     onAvailable: () => challenges.dispatch(),
     onClosed: (harvesterId, redistribute) => challenges.releaseHarvester(harvesterId, redistribute),
     onSolved: (harvesterId) => challenges.solve(harvesterId),
+    onSubmittingOrder: (taskId) => runner.markSubmittingOrder(taskId),
   });
   await challenges.recover();
   const updater = new UpdateController(() => mainWindow);

@@ -1,6 +1,6 @@
 import type { AppData, Harvester, Profile, ProxyConfig, ResourceGroup, Task, TaskGroup, TaskStatus } from "./types.js";
 
-const taskStatuses = new Set<TaskStatus>(["idle", "queued", "monitoring", "found", "adding_to_cart", "carted", "awaiting_user", "completed", "declined", "stopped", "error"]);
+const taskStatuses = new Set<TaskStatus>(["idle", "queued", "monitoring", "found", "adding_to_cart", "submitting_order", "carted", "awaiting_user", "completed", "declined", "stopped", "error"]);
 const object = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Backup contains an invalid record.");
   return value as Record<string, unknown>;

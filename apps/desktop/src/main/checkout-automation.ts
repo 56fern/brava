@@ -146,7 +146,7 @@ export class CheckoutAutomation {
   }
 
   /** Runs the full automatic checkout in the caller-supplied webContents. */
-  async run(task: Task, profile: Parameters<typeof buildShippingFields>[0], webContents: CheckoutWebContents, signal?: AbortSignal): Promise<CheckoutOutcome> {
+  async run(task: Task, profile: Parameters<typeof buildShippingFields>[0], webContents: CheckoutWebContents, signal?: AbortSignal, onSubmittingOrder?: () => Promise<void>): Promise<CheckoutOutcome> {
     this.assertRunning(signal);
     const alreadyConfirmed = parseOrderConfirmation({ url: webContents.getURL(), title: webContents.getTitle(), bodyText: "" });
     if (alreadyConfirmed.confirmed) {
@@ -276,6 +276,8 @@ export class CheckoutAutomation {
       if (!submitted) return { status: "declined", message: `Place Order did not appear after waiting on ${this.pageContext(webContents)}. Nothing was ordered.` };
     }
 
+    this.assertRunning(signal);
+    await onSubmittingOrder?.();
     let lastSiteErrors: string[] = [];
     for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
       this.assertRunning(signal);

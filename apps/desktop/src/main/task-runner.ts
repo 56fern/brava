@@ -466,13 +466,26 @@ export class TaskRunner {
       this.finishOperation(id, controller);
     }
     const stillRunning = await this.getTask(id);
-    if (stillRunning && stillRunning.status !== "adding_to_cart") return;
+    if (stillRunning && !["adding_to_cart", "submitting_order"].includes(stillRunning.status)) return;
     if (outcome.status === "cancelled") return;
     if (outcome.status === "captcha") {
       this.clear(id);
       await this.reportChallenge(id, outcome.challengeUrl, outcome.harvesterId || harvesterId || undefined, outcome.resumeStage);
     } else if (outcome.status === "completed") await this.complete(id, outcome);
     else await this.decline(id, outcome.message);
+  }
+
+  /** The final order control was clicked; the merchant response is still pending. */
+  async markSubmittingOrder(id: string): Promise<void> {
+    const task = await this.getTask(id);
+    if (task?.status !== "adding_to_cart") return;
+    const submitting = await this.update(id, "submitting_order", "Place Order clicked · waiting for Pokémon Center confirmation", { checkoutStage: "confirmation" });
+    // Do not let the normal 32 ms update coalescing swallow this short-lived
+    // status when the merchant confirms an order immediately.
+    if (submitting) {
+      this.pendingUpdates.delete(id);
+      this.window()?.webContents.send("task:update-batch", [submitting]);
+    }
   }
 
   setCheckoutHandlers(handlers: { run: (task: Task, profile: Profile, harvesterId?: string, signal?: AbortSignal) => Promise<CheckoutOutcome> }): void {
@@ -538,8 +551,10 @@ export class TaskRunner {
 
   private async expireCartAttempt(id: string): Promise<void> {
     const task = await this.getTask(id);
-    if (!task || task.status !== "adding_to_cart") return;
-    await this.update(id, "error", "Cart attempt timed out - no cart result was received; restart the task to retry");
+    if (!task || !["adding_to_cart", "submitting_order"].includes(task.status)) return;
+    await this.update(id, "error", task.status === "submitting_order"
+      ? "Order confirmation timed out - verify the order before retrying"
+      : "Cart attempt timed out - no cart result was received; restart the task to retry");
   }
 
   private scheduleQueueGate(id: string): void {

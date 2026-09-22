@@ -148,4 +148,69 @@ const manager = await readFile(new URL("../src/main/harvester-manager.ts", impor
     expect(calls).toEqual(["hide", "show", "focus"]);
     await manager.release("h1", "Done");
   });
+
+  it("clears the previous cart before a fresh checkout, but not during checkout handoff", async () => {
+    const { HarvesterManager } = await import("../src/main/harvester-manager.js");
+    const calls: string[] = [];
+    const harvester = { id: "h1", name: "Harvester 1", status: "open", statusMessage: "Waiting", proxy: "" };
+    const store = {
+      load: async () => ({ harvesters: [harvester] }),
+      updateHarvester: async (_id: string, mutate: (value: typeof harvester) => void) => { mutate(harvester); return harvester; },
+    };
+    const browser = {
+      isDestroyed: () => false,
+      hide: () => calls.push("hide"),
+      loadURL: async () => { calls.push("waiting page"); },
+      webContents: {
+        session: { clearData: async () => { calls.push("clear cart data"); } },
+      },
+    };
+    const manager = new HarvesterManager(store as never, () => null);
+    (manager as unknown as { windows: Map<string, unknown> }).windows.set("h1", browser);
+    (manager as unknown as { open: (id: string) => Promise<void> }).open = async () => undefined;
+    (manager as unknown as { runCheckout: () => Promise<unknown> }).runCheckout = async () => {
+      calls.push("checkout");
+      return { status: "completed", message: "Done" };
+    };
+
+    const task = { id: "t1" } as never;
+    await manager.runCheckoutOnAvailable(task, {} as never);
+    expect(calls).toEqual(["hide", "waiting page", "clear cart data", "checkout"]);
+    calls.length = 0;
+    await manager.runCheckout("h1", task, {} as never);
+    expect(calls).toEqual(["checkout"]);
+
+    Object.assign(harvester, { status: "open", assignedTaskId: undefined });
+    calls.length = 0;
+    (manager as unknown as { waitForQueue: () => Promise<unknown> }).waitForQueue = async () => {
+      calls.push("queue monitor");
+      return { status: "passed", harvesterId: "h1" };
+    };
+    await manager.waitForQueueOnAvailable(task, new AbortController().signal, () => undefined);
+    expect(calls).toEqual(["hide", "waiting page", "clear cart data", "queue monitor"]);
+  });
+
+  it("does not start checkout if the old cart cannot be cleared", async () => {
+    const { HarvesterManager } = await import("../src/main/harvester-manager.js");
+    const harvester = { id: "h1", name: "Harvester 1", status: "open", statusMessage: "Waiting", proxy: "" };
+    const store = {
+      load: async () => ({ harvesters: [harvester] }),
+      updateHarvester: async (_id: string, mutate: (value: typeof harvester) => void) => { mutate(harvester); return harvester; },
+    };
+    const browser = {
+      isDestroyed: () => false,
+      hide: () => undefined,
+      loadURL: async () => undefined,
+      webContents: { session: { clearData: async () => { throw new Error("Storage locked"); } } },
+    };
+    const manager = new HarvesterManager(store as never, () => null);
+    (manager as unknown as { windows: Map<string, unknown> }).windows.set("h1", browser);
+    (manager as unknown as { open: () => Promise<void> }).open = async () => undefined;
+    const checkout = vi.fn(async () => ({ status: "completed", message: "Done" }));
+    (manager as unknown as { runCheckout: typeof checkout }).runCheckout = checkout;
+
+    const result = await manager.runCheckoutOnAvailable({ id: "t1" } as never, {} as never);
+    expect(result).toMatchObject({ status: "declined", message: expect.stringContaining("could not be cleared") });
+    expect(checkout).not.toHaveBeenCalled();
+  });
 });
