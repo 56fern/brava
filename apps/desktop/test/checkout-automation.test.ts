@@ -63,6 +63,8 @@ describe("checkout scripts", () => {
     expect(script).toContain("view.HTMLInputElement.prototype");
     expect(script).toContain("new view.Event('input'");
     expect(script).toContain("node.tagName?.toLowerCase() === 'select'");
+    expect(script).toContain("isControl(candidate) && !used.has(candidate)");
+    expect(script).toContain("if (!isControl(node)) return false");
     expect(script).not.toContain("element instanceof HTMLSelectElement");
   });
 
@@ -122,7 +124,13 @@ describe("CheckoutAutomation engine", () => {
           page = page === "cart" ? "guest" : page === "shipping" ? "payment" : "review";
           return { clicked: true };
         }
-        if (script.includes("const plan =")) { calls.push(page === "shipping" ? "fill shipping" : "fill payment"); return { filled: [], missing: [] }; }
+        if (script.includes("const plan =")) {
+          calls.push(page === "shipping" ? "fill shipping" : "fill payment");
+          if (script.includes('"label":"Payment method"')) return { filled: ["Payment method"], missing: [] };
+          return page === "shipping"
+            ? { filled: ["First name", "Last name", "Email", "Phone", "Address", "City", "State / region", "Postal code", "Country"], missing: [] }
+            : { filled: ["Cardholder name", "Card number", "Card expiry month", "Card expiry year", "Security code"], missing: [] };
+        }
         calls.push("variant"); return { variant: "Blue / L", quantity: "2" };
       },
       getURL: () => `https://www.pokemoncenter.com/${page === "product" ? "product/x" : page === "cart" ? "cart" : page === "guest" ? "checkout" : page === "shipping" ? "checkout/address" : page === "payment" ? "checkout/payment" : page === "review" ? "checkout/review" : "confirmation"}`,
@@ -215,6 +223,45 @@ describe("CheckoutAutomation engine", () => {
     expect(calls).toEqual(["select method", "fill card details", "continue payment", "place order"]);
   });
 
+  it("fills payment details across Electron child frames", async () => {
+    const calls: string[] = [];
+    let page: "payment" | "review" | "confirmation" = "payment";
+    const topFrame = {
+      name: "main checkout",
+      executeJavaScript: async (script: string) => {
+        if (script.includes('"label":"Payment method"')) { calls.push("method in main"); return { filled: ["Payment method"] }; }
+        return { filled: [] };
+      },
+    };
+    const cardFrame = {
+      name: "hosted card fields",
+      executeJavaScript: async (script: string) => {
+        if (script.includes('"label":"Card number"')) {
+          calls.push("details in child");
+          return { filled: ["Cardholder name", "Card number", "Card expiry month", "Card expiry year", "Security code"] };
+        }
+        return { filled: [] };
+      },
+    };
+    const webContents = {
+      mainFrame: { ...topFrame, framesInSubtree: [topFrame, cardFrame] },
+      executeJavaScript: async (script: string) => {
+        if (script.includes("return { state: 'confirmation'")) return { state: page };
+        if (script.includes("challenges.cloudflare")) return { detected: false };
+        if (script.includes("document.body?.innerText")) return page === "confirmation" ? "Thank you for your order! Order Number: PC-888888" : "";
+        if (script.includes("data-brava-last-clicked")) { calls.push("continue payment"); page = "review"; return { clicked: true }; }
+        if (script.includes("place your order")) { calls.push("place order"); page = "confirmation"; return { clicked: true }; }
+        return {};
+      },
+      getURL: () => `https://www.pokemoncenter.com/${page === "payment" ? "checkout/payment" : page === "review" ? "checkout/review" : "confirmation"}`,
+      getTitle: () => page === "confirmation" ? "Thank You" : "Checkout",
+    };
+
+    const outcome = await new CheckoutAutomation(noSleep).run({ ...task, checkoutStage: "payment" } as never, profile as never, webContents);
+    expect(outcome).toMatchObject({ status: "completed", orderNumber: "PC-888888" });
+    expect(calls).toEqual(["method in main", "details in child", "continue payment", "place order"]);
+  });
+
   it("pauses only when the live page actually exposes a CAPTCHA", async () => {
     const calls: string[] = [];
     const challengeUrl = "https://www.pokemoncenter.com/challenge/checkout";
@@ -241,11 +288,14 @@ describe("CheckoutAutomation engine", () => {
         if (script.includes("challenges.cloudflare")) return { detected: false };
         if (script.includes("document.body?.innerText")) return page === "confirmation" ? "Thank you for your order! Order Number: PC-123456" : "";
         if (script.includes("const plan =")) {
+          if (script.includes('"label":"Payment method"')) return { filled: ["Payment method"], missing: [] };
           if (page === "shipping") {
             fillAttempts += 1;
-            return fillAttempts < 3 ? { filled: [], missing: ["First name"] } : { filled: ["First name"], missing: [] };
+            return fillAttempts < 3
+              ? { filled: [], missing: ["First name"] }
+              : { filled: ["First name", "Last name", "Email", "Phone", "Address", "City", "State / region", "Postal code", "Country"], missing: [] };
           }
-          return { filled: ["Card number"], missing: [] };
+          return { filled: ["Cardholder name", "Card number", "Card expiry month", "Card expiry year", "Security code"], missing: [] };
         }
         if (script.includes("place your order")) { page = "confirmation"; return { clicked: true }; }
         if (script.includes("data-brava-clicked")) return { clicked: true };

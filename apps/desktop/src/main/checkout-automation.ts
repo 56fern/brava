@@ -21,6 +21,15 @@ export type CheckoutWebContents = {
   executeJavaScript: (script: string, userGesture?: boolean) => Promise<unknown>;
   getURL: () => string;
   getTitle: () => string;
+  mainFrame?: CheckoutFrame;
+};
+
+type CheckoutFrame = {
+  executeJavaScript: (script: string, userGesture?: boolean) => Promise<unknown>;
+  isDestroyed?: () => boolean;
+  readonly framesInSubtree?: readonly CheckoutFrame[];
+  readonly name?: string;
+  readonly url?: string;
 };
 
 export type CheckoutOutcome =
@@ -59,13 +68,30 @@ export class CheckoutAutomation {
     this.assertRunning(signal);
   }
 
-  private async readFields(webContents: CheckoutWebContents, fields: Parameters<typeof buildFillFieldsScript>[0], signal?: AbortSignal): Promise<{ filled: string[]; missing: string[] }> {
+  private async readFields(webContents: CheckoutWebContents, fields: Parameters<typeof buildFillFieldsScript>[0], signal?: AbortSignal): Promise<{ filled: string[]; missing: string[]; errors: string[] }> {
     this.assertRunning(signal);
-    const result = (await webContents.executeJavaScript(buildFillFieldsScript(fields), true)) as {
-      filled?: string[];
-      missing?: string[];
-    } | null;
-    return { filled: result?.filled ?? [], missing: result?.missing ?? [] };
+    const script = buildFillFieldsScript(fields);
+    const frameTree = webContents.mainFrame?.framesInSubtree;
+    const targets: readonly CheckoutFrame[] = frameTree?.length ? frameTree : [webContents];
+    const filled = new Set<string>();
+    const errors: string[] = [];
+    for (const [index, frame] of targets.entries()) {
+      this.assertRunning(signal);
+      if (frame.isDestroyed?.()) continue;
+      try {
+        const result = (await frame.executeJavaScript(script, true)) as { filled?: string[] } | null;
+        for (const label of result?.filled ?? []) filled.add(label);
+      } catch (error) {
+        const location = frame.name || frame.url || `frame ${index + 1}`;
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`${location}: ${message}`.slice(0, 240));
+      }
+    }
+    return {
+      filled: [...filled],
+      missing: fields.filter((field) => !filled.has(field.label)).map((field) => field.label),
+      errors,
+    };
   }
 
   private async pageState(webContents: CheckoutWebContents, signal?: AbortSignal): Promise<CheckoutPageState> {
@@ -170,6 +196,7 @@ export class CheckoutAutomation {
     if (stage === "shipping") {
       const fields = buildShippingFields(profile);
       let missing = fields.map((field) => field.label);
+      let fieldErrors: string[] = [];
       for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
         this.assertRunning(signal);
         const captcha = await this.captcha(webContents, "shipping", signal);
@@ -178,10 +205,11 @@ export class CheckoutAutomation {
         if (detectedState === "payment" || detectedState === "review" || detectedState === "confirmation") { stage = detectedState; break; }
         const filled = await this.readFields(webContents, fields, signal);
         missing = filled.missing;
+        fieldErrors = filled.errors;
         await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
         await this.wait(pollIntervalMs, signal);
       }
-      if (stage === "shipping") return { status: "declined", message: `Shipping could not continue after waiting on ${this.pageContext(webContents)}. Fields not found: ${missing.join(", ") || "none; check the page validation message"}. Nothing was ordered.` };
+      if (stage === "shipping") return { status: "declined", message: `Shipping could not continue after waiting on ${this.pageContext(webContents)}. Fields not found: ${missing.join(", ") || "none; check the page validation message"}.${fieldErrors.length ? ` Frame diagnostics: ${fieldErrors.join(" | ")}` : ""} Nothing was ordered.` };
     }
 
     if (stage === "payment") {
@@ -190,6 +218,7 @@ export class CheckoutAutomation {
       const payment = splitPaymentFields(fields);
       let methodReady = payment.method.length === 0;
       let missing = payment.details.map((field) => field.label);
+      let fieldErrors: string[] = [];
       for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
         this.assertRunning(signal);
         const captcha = await this.captcha(webContents, "payment", signal);
@@ -199,15 +228,17 @@ export class CheckoutAutomation {
         if (!methodReady) {
           const selected = await this.readFields(webContents, payment.method, signal);
           methodReady = selected.missing.length === 0;
+          fieldErrors = selected.errors;
           await this.wait(pollIntervalMs, signal);
           continue;
         }
         const filled = await this.readFields(webContents, payment.details, signal);
         missing = filled.missing;
+        fieldErrors = filled.errors;
         await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
         await this.wait(pollIntervalMs, signal);
       }
-      if (stage === "payment") return { status: "declined", message: `Payment could not continue after waiting on ${this.pageContext(webContents)}. Fields not found: ${missing.join(", ") || "none; check the page validation message"}. Nothing was ordered.` };
+      if (stage === "payment") return { status: "declined", message: `Payment could not continue after waiting on ${this.pageContext(webContents)}. Fields not found: ${missing.join(", ") || "none; check the page validation message"}.${fieldErrors.length ? ` Frame diagnostics: ${fieldErrors.join(" | ")}` : ""} Nothing was ordered.` };
     }
 
     if (stage === "review") {

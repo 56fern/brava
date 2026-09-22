@@ -91,6 +91,7 @@ export function buildFillFieldsScript(fields: CheckoutFieldScript[]): string {
   const plan = fields.map((field) => ({ label: field.label, value: field.value, selectors: field.selectors }));
   return `(async () => {
   const plan = ${JSON.stringify(plan)};
+  const isControl = (element) => ['input', 'select', 'textarea'].includes(element?.tagName?.toLowerCase());
   const setNativeValue = (element, value) => {
     // Payment controls can live in a same-origin iframe. DOM constructors are
     // realm-specific, so using the top page's prototype on an iframe element
@@ -119,7 +120,11 @@ export function buildFillFieldsScript(fields: CheckoutFieldScript[]): string {
   const query = (selector) => {
     for (const root of roots) {
       try {
-        const node = [...root.querySelectorAll(selector)].find((candidate) => !used.has(candidate));
+        // Hosted-card providers commonly put field names on iframe elements.
+        // A broad selector such as [name*="card"][name*="number"] must never
+        // return that iframe; attempting to use an input setter on it throws
+        // Chromium's "Illegal invocation" error.
+        const node = [...root.querySelectorAll(selector)].find((candidate) => isControl(candidate) && !used.has(candidate));
         if (node) return node;
       } catch {}
     }
@@ -150,11 +155,12 @@ export function buildFillFieldsScript(fields: CheckoutFieldScript[]): string {
         const candidates = [...container.querySelectorAll('input, select, textarea')].filter((candidate) => visible(candidate) && !used.has(candidate));
         if (candidates.length === 1) control = candidates[0];
       }
-      if (control && visible(control) && !used.has(control)) return control;
+      if (isControl(control) && visible(control) && !used.has(control)) return control;
     }
     return null;
   };
   const assign = (node, field) => {
+    if (!isControl(node)) return false;
     if (node.tagName?.toLowerCase() === 'select') {
       const wanted = field.value.trim().toLowerCase();
       const wantedDigits = wanted.replace(/\D/g, '');
