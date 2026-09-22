@@ -1,19 +1,19 @@
 {
-  "version": "0.52.6",
-  "title": "Shipping Name Autofill Fix",
+  "version": "0.52.7",
+  "title": "Payment and Profile Editing Improvements",
   "sections": [
     {
       "name": "Checkout",
       "items": [
-        "First Name and Last Name are now matched to their visible checkout labels.",
-        "Each profile field is assigned to a unique input so one name cannot overwrite the other.",
-        "The complete guest checkout flow continues through shipping, payment, review, and Place Order."
+        "Brava now selects Credit/Debit Card before filling payment details.",
+        "Card number, security code, expiration month, and expiration year are filled after the payment form appears."
       ]
     },
     {
-      "name": "CAPTCHA",
+      "name": "Editing",
       "items": [
-        "Checkout pauses only when a CAPTCHA is actually present and resumes from the interrupted step."
+        "The task editor now provides more space for grouped profile and proxy selection.",
+        "Profiles can now be opened and edited individually with Shipping, Billing, and Card tabs."
       ]
     }
   ],
