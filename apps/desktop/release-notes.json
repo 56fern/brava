@@ -1,20 +1,19 @@
 {
-  "version": "0.52.4",
-  "title": "Checkout Form Readiness Fix",
+  "version": "0.52.5",
+  "title": "Complete Guest Checkout Flow",
   "sections": [
     {
       "name": "Checkout",
       "items": [
-        "Brava now waits for delayed cart and checkout controls instead of treating them as missing profile details.",
-        "Multi-step checkout navigation now continues through cart, shipping, payment, and review pages.",
-        "State, region, and country fields are now filled from the assigned profile."
+        "After adding an item, Brava now opens the cart and selects Guest Checkout.",
+        "Shipping and payment details are filled from the assigned profile on their correct pages.",
+        "Brava continues through shipping, payment, review, and Place Order in sequence."
       ]
     },
     {
       "name": "CAPTCHA",
       "items": [
-        "Checkout resumes from the exact paused step after a CAPTCHA is solved.",
-        "Add to Cart and Place Order controls are never clicked twice during retries."
+        "Checkout pauses only when a CAPTCHA is actually present and resumes from the interrupted step."
       ]
     }
   ],
