@@ -1,19 +1,13 @@
 {
-  "version": "0.52.9",
-  "title": "Task Stop and Queue Mode Fix",
+  "version": "0.52.10",
+  "title": "Payment Card Entry Fix",
   "sections": [
     {
-      "name": "Task control",
+      "name": "Automatic checkout",
       "items": [
-        "Stopping a task now immediately cancels its active checkout navigation, polling, and clicks."
-      ]
-    },
-    {
-      "name": "Queue mode",
-      "items": [
-        "Wait for queue now monitors Pokémon Center until a real waiting room goes live.",
-        "The task waits in the queue until access is granted, then reuses the same browser session to open the assigned SKU and begin checkout.",
-        "Product signals no longer bypass queue mode while the task is waiting."
+        "Credit/Debit Card is now selected once, allowing Pokémon Center's card form to finish rendering before Brava fills it.",
+        "Card number and CVV are typed into their inputs after the payment form appears.",
+        "Expiration month and year are selected from Pokémon Center's separate dropdowns, including two-digit year values."
       ]
     }
   ],
