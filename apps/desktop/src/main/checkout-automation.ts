@@ -1,4 +1,4 @@
-import type { Task } from "../shared/types.js";
+import type { CheckoutStage, Task } from "../shared/types.js";
 import {
   buildAddToCartScript,
   buildCaptchaDetectionScript,
@@ -19,10 +19,13 @@ export type CheckoutWebContents = {
 
 export type CheckoutOutcome =
   | { status: "completed"; orderNumber?: string; amount?: number; message: string }
-  | { status: "captcha"; challengeUrl: string; harvesterId?: string; message: string }
+  | { status: "captcha"; challengeUrl: string; harvesterId?: string; resumeStage: CheckoutStage; message: string }
   | { status: "declined"; message: string };
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const pollAttempts = 40;
+const pollIntervalMs = 300;
+type ClickResult = { clicked?: boolean; candidates?: unknown } | null;
 
 /**
  * Drives a harvester window through add-to-cart and checkout without any user
@@ -42,14 +45,19 @@ export class CheckoutAutomation {
     return { filled: result?.filled ?? [], missing: result?.missing ?? [] };
   }
 
-  private async captcha(webContents: CheckoutWebContents): Promise<CheckoutOutcome | null> {
+  private async captcha(webContents: CheckoutWebContents, resumeStage: CheckoutStage): Promise<Extract<CheckoutOutcome, { status: "captcha" }> | null> {
     const result = (await webContents.executeJavaScript(buildCaptchaDetectionScript(), true)) as { detected?: boolean; url?: string } | null;
     if (!result?.detected) return null;
     return {
       status: "captcha",
       challengeUrl: result.url || webContents.getURL(),
+      resumeStage,
       message: "CAPTCHA detected · checkout paused briefly for the harvester",
     };
+  }
+
+  private pageContext(webContents: CheckoutWebContents): string {
+    return `${webContents.getTitle() || "Untitled page"} at ${webContents.getURL() || "an unknown URL"}`;
   }
 
   private async confirmation(webContents: CheckoutWebContents): Promise<Extract<CheckoutOutcome, { status: "completed" }> | null> {
@@ -75,42 +83,66 @@ export class CheckoutAutomation {
       const existingConfirmation = await this.confirmation(webContents);
       if (existingConfirmation) return existingConfirmation;
     }
-    const initialCaptcha = await this.captcha(webContents);
-    if (initialCaptcha) return initialCaptcha;
-    if (task.variant.trim() || task.effectiveQuantity !== undefined) {
-      await webContents.executeJavaScript(buildProductPageScript(task.variant, task.effectiveQuantity ?? task.quantity), true);
-    }
-    const cart = (await webContents.executeJavaScript(buildAddToCartScript(), true)) as { clicked?: boolean } | null;
-    if (cart?.clicked) await this.nap(1_500);
-    const cartCaptcha = await this.captcha(webContents);
-    if (cartCaptcha) return cartCaptcha;
-    const proceed = (await webContents.executeJavaScript(buildProceedToCheckoutScript(), true)) as { clicked?: boolean } | null;
-    if (proceed?.clicked) await this.nap(2_000);
-    const checkoutCaptcha = await this.captcha(webContents);
-    if (checkoutCaptcha) return checkoutCaptcha;
-    const filled = await this.readFields(webContents, profile);
-    if (filled.missing.length) {
-      const formCaptcha = await this.captcha(webContents);
-      if (formCaptcha) return formCaptcha;
-      if (!cart?.clicked && !proceed?.clicked) {
-        return { status: "declined", message: "No add-to-cart or checkout controls were found; nothing was ordered." };
+    let stage = task.checkoutStage ?? "product";
+
+    if (stage === "product") {
+      const initialCaptcha = await this.captcha(webContents, "product");
+      if (initialCaptcha) return initialCaptcha;
+      if (task.variant.trim() || task.effectiveQuantity !== undefined) {
+        await webContents.executeJavaScript(buildProductPageScript(task.variant, task.effectiveQuantity ?? task.quantity), true);
       }
-      return { status: "declined", message: `Checkout form missing fields: ${filled.missing.join(", ")}. Nothing was ordered.` };
+      let cartClicked = false;
+      for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
+        const captcha = await this.captcha(webContents, "product");
+        if (captcha) return captcha;
+        const cart = (await webContents.executeJavaScript(buildAddToCartScript(), true)) as ClickResult;
+        if (cart?.clicked) { cartClicked = true; stage = "checkout"; break; }
+        await this.nap(pollIntervalMs);
+      }
+      if (!cartClicked) return { status: "declined", message: `Add to Cart did not appear after waiting on ${this.pageContext(webContents)}. Nothing was ordered.` };
     }
-    await this.nap(500);
-    const submit = (await webContents.executeJavaScript(buildSubmitOrderScript(), true)) as { clicked?: boolean } | null;
-    if (!submit?.clicked) {
+
+    if (stage === "checkout") {
+      const required = buildCheckoutFields(profile).map((field) => field.label);
+      const filledLabels = new Set<string>();
+      let missing = required;
+      for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
+        const captcha = await this.captcha(webContents, "checkout");
+        if (captcha) return captcha;
+        const filled = await this.readFields(webContents, profile);
+        filled.filled.forEach((label) => filledLabels.add(label));
+        missing = required.filter((label) => !filledLabels.has(label));
+        if (!missing.length) { stage = "submit"; break; }
+        await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
+        await this.nap(pollIntervalMs);
+      }
+      if (stage !== "submit") {
+        return { status: "declined", message: `Checkout form did not become ready after waiting on ${this.pageContext(webContents)}. Fields not found on the page: ${missing.join(", ")}. Nothing was ordered.` };
+      }
+    }
+
+    if (stage === "submit") {
+      let submitted = false;
+      for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
+        const captcha = await this.captcha(webContents, "submit");
+        if (captcha) return captcha;
+        const existingConfirmation = await this.confirmation(webContents);
+        if (existingConfirmation) return existingConfirmation;
+        const submit = (await webContents.executeJavaScript(buildSubmitOrderScript(), true)) as ClickResult;
+        if (submit?.clicked) { submitted = true; stage = "confirmation"; break; }
+        await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
+        await this.nap(pollIntervalMs);
+      }
+      if (!submitted) return { status: "declined", message: `Place Order did not appear after waiting on ${this.pageContext(webContents)}. Nothing was ordered.` };
+    }
+
+    for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
+      const captcha = await this.captcha(webContents, "confirmation");
+      if (captcha) return captcha;
       const confirmation = await this.confirmation(webContents);
       if (confirmation) return confirmation;
-      return { status: "declined", message: "No place-order control was found; the cart was filled but not ordered." };
+      await this.nap(pollIntervalMs);
     }
-    await this.nap(2_500);
-    const submitCaptcha = await this.captcha(webContents);
-    if (submitCaptcha) return submitCaptcha;
-    const confirmation = await this.confirmation(webContents);
-    if (!confirmation) {
-      return { status: "declined", message: "Order submission was clicked but no confirmation appeared; verify the page before retrying." };
-    }
-    return confirmation;
+    return { status: "declined", message: `Place Order was clicked once, but no confirmation appeared after waiting on ${this.pageContext(webContents)}. Verify the order before retrying.` };
   }
 }

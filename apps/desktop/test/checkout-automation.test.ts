@@ -29,7 +29,7 @@ describe("checkout scripts", () => {
       payment: { cardholderName: "Jane Doe", brand: "Visa", number: "4242424242424242", last4: "4242", expiryMonth: "08", expiryYear: "2029", cvv: "123", billingSameAsShipping: true },
     });
     const labels = fields.map((field) => field.label);
-    expect(labels).toEqual(expect.arrayContaining(["First name", "Email", "Phone", "Address", "City", "Postal code", "Card number", "Security code"]));
+    expect(labels).toEqual(expect.arrayContaining(["First name", "Email", "Phone", "Address", "City", "State / region", "Postal code", "Country", "Card number", "Security code"]));
     const card = fields.find((field) => field.label === "Card number");
     expect(card?.value).toBe("4242424242424242");
     expect(buildFillFieldsScript(fields)).toContain("4242424242424242");
@@ -72,12 +72,13 @@ describe("CheckoutAutomation engine", () => {
   it("completes checkout and reports the order number", async () => {
     const calls: string[] = [];
     let submitted = false;
+    const allFields = buildCheckoutFields(profile as never).map((field) => field.label);
     const webContents = {
       executeJavaScript: async (script: string) => {
-        if (script.includes("document.body?.innerText")) return "Thank you for your order! Order Number: PC-998877 Order Total $54.99";
+        if (script.includes("document.body?.innerText")) return submitted ? "Thank you for your order! Order Number: PC-998877 Order Total $54.99" : "";
         if (script.includes("place your order")) { calls.push("submit"); submitted = true; return { clicked: true }; }
         if (script.includes("add to cart") || script.includes("view cart")) { calls.push("cart"); return { clicked: true }; }
-        if (script.includes("document.querySelector")) { calls.push("fill"); return { filled: ["First name"], missing: [] }; }
+        if (script.includes("const plan =")) { calls.push("fill"); return { filled: allFields, missing: [] }; }
         calls.push("variant"); return { variant: "Blue / L", quantity: "2" };
       },
       getURL: () => submitted ? "https://www.pokemoncenter.com/confirmation" : "https://www.pokemoncenter.com/product/x",
@@ -103,7 +104,7 @@ describe("CheckoutAutomation engine", () => {
     };
     const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);
     expect(outcome.status).toBe("declined");
-    expect(outcome.status === "declined" && outcome.message).toContain("add-to-cart");
+    expect(outcome.status === "declined" && outcome.message).toMatch(/Add to Cart/i);
   });
 
   it("pauses only when the live page actually exposes a CAPTCHA", async () => {
@@ -119,7 +120,53 @@ describe("CheckoutAutomation engine", () => {
       getTitle: () => "Security check",
     };
     const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);
-    expect(outcome).toMatchObject({ status: "captcha", challengeUrl });
+    expect(outcome).toMatchObject({ status: "captcha", challengeUrl, resumeStage: "product" });
     expect(calls).toHaveLength(0);
+  });
+
+  it("polls until delayed checkout fields render instead of blaming the profile", async () => {
+    const allFields = buildCheckoutFields(profile as never).map((field) => field.label);
+    let fillAttempts = 0;
+    let submitted = false;
+    const webContents = {
+      executeJavaScript: async (script: string) => {
+        if (script.includes("challenges.cloudflare")) return { detected: false };
+        if (script.includes("document.body?.innerText")) return submitted ? "Thank you for your order! Order Number: PC-123456" : "";
+        if (script.includes("const plan =")) {
+          fillAttempts += 1;
+          return fillAttempts < 3 ? { filled: [], missing: allFields } : { filled: allFields, missing: [] };
+        }
+        if (script.includes("place your order")) { submitted = true; return { clicked: true }; }
+        if (script.includes("add to cart") || script.includes("view cart")) return { clicked: true };
+        return {};
+      },
+      getURL: () => submitted ? "https://www.pokemoncenter.com/confirmation" : "https://www.pokemoncenter.com/checkout",
+      getTitle: () => submitted ? "Thank You" : "Checkout",
+    };
+
+    const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);
+    expect(fillAttempts).toBe(3);
+    expect(outcome).toMatchObject({ status: "completed", orderNumber: "PC-123456" });
+  });
+
+  it("resumes confirmation after CAPTCHA without clicking Add to Cart or Place Order again", async () => {
+    let addToCartCalls = 0;
+    let submitCalls = 0;
+    const webContents = {
+      executeJavaScript: async (script: string) => {
+        if (script.includes("challenges.cloudflare")) return { detected: false };
+        if (script.includes("document.body?.innerText")) return "Thank you for your order! Order Number: PC-654321";
+        if (script.includes("add to cart")) { addToCartCalls += 1; return { clicked: true }; }
+        if (script.includes("place your order")) { submitCalls += 1; return { clicked: true }; }
+        return {};
+      },
+      getURL: () => "https://www.pokemoncenter.com/confirmation",
+      getTitle: () => "Thank You",
+    };
+
+    const outcome = await new CheckoutAutomation(noSleep).run({ ...task, checkoutStage: "confirmation" } as never, profile as never, webContents);
+    expect(outcome).toMatchObject({ status: "completed", orderNumber: "PC-654321" });
+    expect(addToCartCalls).toBe(0);
+    expect(submitCalls).toBe(0);
   });
 });

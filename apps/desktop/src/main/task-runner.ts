@@ -1,7 +1,7 @@
 import type { BrowserWindow } from "electron";
 import type { AppStore } from "./store.js";
 import type { CheckoutOutcome } from "./checkout-automation.js";
-import type { ProductSignal, Profile, Task, TaskStatus } from "../shared/types.js";
+import type { CheckoutStage, ProductSignal, Profile, Task, TaskStatus } from "../shared/types.js";
 import { notifyTask } from "./webhook-notifier.js";
 import { publishPublicCheckout } from "./public-checkout-client.js";
 import { SharedScheduler, type SchedulerStats } from "./shared-scheduler.js";
@@ -227,7 +227,7 @@ export class TaskRunner {
   async stop(id: string): Promise<void> {
     this.clear(id);
     await this.challengeHandlers?.cancel(id);
-    await this.update(id, "stopped", "Stopped by user", { challengeStatus: undefined, challengeUrl: undefined, assignedHarvesterId: undefined });
+    await this.update(id, "stopped", "Stopped by user", { challengeStatus: undefined, challengeUrl: undefined, assignedHarvesterId: undefined, checkoutStage: undefined });
   }
   async stopMany(ids: string[]): Promise<void> {
     for (const id of ids) await this.stop(id);
@@ -266,6 +266,7 @@ export class TaskRunner {
       challengeStatus: undefined,
       challengeUrl: undefined,
       assignedHarvesterId: undefined,
+      checkoutStage: undefined,
       ...(outcome?.orderNumber ? { orderNumber: outcome.orderNumber } : {}),
       ...(outcome?.amount != null ? { checkoutAmount: outcome.amount } : {}),
     });
@@ -289,7 +290,7 @@ export class TaskRunner {
       : nextProfile
         ? `Checkout was declined - ${nextProfile.name} selected for the next user-confirmed retry`
         : "Checkout was declined - review the assigned profile before retrying";
-    const task = await this.update(id, "declined", message, { ...(nextProfile ? { profileId: nextProfile.id } : {}), challengeStatus: undefined, challengeUrl: undefined, assignedHarvesterId: undefined });
+    const task = await this.update(id, "declined", message, { ...(nextProfile ? { profileId: nextProfile.id } : {}), challengeStatus: undefined, challengeUrl: undefined, assignedHarvesterId: undefined, checkoutStage: undefined });
     if (task) void notifyTask(this.store, task, "decline").catch(() => undefined);
   }
   private async declineLegacy(id: string): Promise<void> {
@@ -300,7 +301,7 @@ export class TaskRunner {
   async markCarted(id: string): Promise<void> {
     this.clear(id);
     await this.challengeHandlers?.cancel(id);
-    await this.update(id, "carted", "Cart confirmed · continue checkout in the official browser", { challengeStatus: undefined, challengeUrl: undefined, assignedHarvesterId: undefined });
+    await this.update(id, "carted", "Cart confirmed · continue checkout in the official browser", { challengeStatus: undefined, challengeUrl: undefined, assignedHarvesterId: undefined, checkoutStage: undefined });
   }
 
   async applyCartLimit(id: string, maximum: number): Promise<void> {
@@ -390,7 +391,7 @@ export class TaskRunner {
       return;
     }
     this.clear(id);
-    await this.update(id, "adding_to_cart", `${cartQuantityMessage(task)} · automatic checkout starting`, { ...cartQuantityPatch(task, task.maxCartQuantity), productUrl: checkoutUrl });
+    await this.update(id, "adding_to_cart", `${cartQuantityMessage(task)} · automatic checkout starting`, { ...cartQuantityPatch(task, task.maxCartQuantity), productUrl: checkoutUrl, checkoutStage: "product" });
     this.scheduler.schedule(`${id}:automatic-checkout-timeout`, automaticCheckoutTimeoutMs, () => this.expireCartAttempt(id));
     await this.beginAutoCheckout(id, "");
   }
@@ -418,7 +419,7 @@ export class TaskRunner {
     if (stillRunning && stillRunning.status !== "adding_to_cart") return;
     if (outcome.status === "captcha") {
       this.clear(id);
-      await this.reportChallenge(id, outcome.challengeUrl, outcome.harvesterId || harvesterId || undefined);
+      await this.reportChallenge(id, outcome.challengeUrl, outcome.harvesterId || harvesterId || undefined, outcome.resumeStage);
     } else if (outcome.status === "completed") await this.complete(id, outcome);
     else await this.decline(id, outcome.message);
   }
@@ -443,7 +444,7 @@ export class TaskRunner {
     );
   }
 
-  async reportChallenge(id: string, challengeUrl: string, preferredHarvesterId?: string): Promise<void> {
+  async reportChallenge(id: string, challengeUrl: string, preferredHarvesterId?: string, checkoutStage?: CheckoutStage): Promise<void> {
     const task = await this.getTask(id);
     if (!task) throw new Error("Task not found");
     let parsed: URL;
@@ -456,6 +457,7 @@ export class TaskRunner {
       challengeUrl,
       challengeStatus: "queued",
       assignedHarvesterId: undefined,
+      ...(checkoutStage ? { checkoutStage } : {}),
     });
     if (!this.challengeHandlers) return;
     if (preferredHarvesterId) await this.challengeHandlers.request(id, challengeUrl, preferredHarvesterId);

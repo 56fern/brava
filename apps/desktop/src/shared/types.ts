@@ -59,6 +59,7 @@ export type ProxyTestTarget = "pokemon_center" | "google" | "cloudflare";
 export type ResourceGroup = { id: string; name: string };
 
 export type TaskStatus = "idle" | "queued" | "monitoring" | "found" | "adding_to_cart" | "carted" | "awaiting_user" | "completed" | "declined" | "stopped" | "error";
+export type CheckoutStage = "product" | "checkout" | "submit" | "confirmation";
 
 export type TaskEvent = {
   status: TaskStatus;
@@ -135,6 +136,7 @@ export type Task = {
   assignedHarvesterId?: string;
   challengeRequestedAt?: string;
   challengeAttempts?: number;
+  checkoutStage?: CheckoutStage;
   status: TaskStatus;
   statusMessage: string;
   updatedAt: string;

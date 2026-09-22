@@ -31,7 +31,9 @@ export function buildCheckoutFields(profile: Profile, extra?: { address1Hint?: s
     { label: "Address", value: profile.address1 + (extra?.address1Hint ? ` ${extra.address1Hint}` : ""), selectors: ["[autocomplete='address-line1']", "[name*='address' i][name*='1' i]", "#address1", "[name*='street' i]"] },
     { label: "Address line 2", value: profile.address2, selectors: ["[autocomplete='address-line2']", "[name*='address' i][name*='2' i]", "#address2"] },
     { label: "City", value: profile.city, selectors: ["[autocomplete='address-level2']", "[name*='city' i]", "[name*='town' i]"] },
+    { label: "State / region", value: profile.region, selectors: ["[autocomplete='address-level1']", "[name*='state' i]", "[name*='region' i]", "[name*='province' i]"] },
     { label: "Postal code", value: profile.postalCode, selectors: ["[autocomplete='postal-code']", "[name*='zip' i]", "[name*='postal' i]", "[name*='postcode' i]"] },
+    { label: "Country", value: profile.country, selectors: ["[autocomplete='country']", "[autocomplete='country-name']", "[name*='country' i]"] },
   ];
   if (billing) {
     fields.push(
@@ -144,11 +146,12 @@ export function buildAddToCartScript(): string {
   const visible = (element) => element && element.offsetParent !== null && !element.disabled;
   const candidates = [...document.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"], [data-testid*="cart" i]')];
   const match = candidates.find((element) => {
-    if (!visible(element)) return false;
+    if (!visible(element) || element.hasAttribute('data-brava-clicked')) return false;
     const text = (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || element.value || '').trim().toLowerCase();
     return patterns.some((pattern) => text === pattern || text.startsWith(pattern));
   });
   if (!match) return { clicked: false, candidates: candidates.filter(visible).length };
+  match.setAttribute('data-brava-clicked', 'true');
   match.click();
   return { clicked: true };
 })()`;
@@ -156,17 +159,18 @@ export function buildAddToCartScript(): string {
 
 /** Script that clicks the control that advances from the cart to the checkout form. */
 export function buildProceedToCheckoutScript(): string {
-  const patterns = ["proceed to checkout", "proceed to secure checkout", "secure checkout", "continue to checkout", "continue to secure checkout", "checkout", "view cart", "go to cart"];
+  const patterns = ["proceed to checkout", "proceed to secure checkout", "secure checkout", "continue to checkout", "continue to secure checkout", "continue to payment", "continue to delivery", "continue to shipping", "review order", "checkout", "view cart", "go to cart"];
   return `(() => {
   const patterns = ${JSON.stringify(patterns)};
   const visible = (element) => element && element.offsetParent !== null && !element.disabled;
   const candidates = [...document.querySelectorAll('button, [role="button"], a[href*="checkout" i], a[href*="cart" i], input[type="submit"]')];
   const match = candidates.find((element) => {
-    if (!visible(element)) return false;
+    if (!visible(element) || element.hasAttribute('data-brava-clicked')) return false;
     const text = (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || element.value || '').trim().toLowerCase();
     return patterns.some((pattern) => text === pattern || text.includes(pattern));
   });
   if (!match) return { clicked: false, candidates: candidates.filter(visible).map((element) => (element.textContent || element.value || '').trim().slice(0, 40)).slice(0, 10) };
+  match.setAttribute('data-brava-clicked', 'true');
   match.click();
   return { clicked: true };
 })()`;
@@ -180,11 +184,12 @@ export function buildSubmitOrderScript(): string {
   const visible = (element) => element && element.offsetParent !== null && !element.disabled;
   const candidates = [...document.querySelectorAll('button, [role="button"], input[type="submit"], button[type="submit"]')];
   const match = candidates.find((element) => {
-    if (!visible(element)) return false;
+    if (!visible(element) || element.hasAttribute('data-brava-clicked')) return false;
     const text = (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || element.value || '').trim().toLowerCase();
     return patterns.some((pattern) => text === pattern || text.includes(pattern));
   });
   if (!match) return { clicked: false, candidates: candidates.filter(visible).map((element) => (element.textContent || element.value || '').trim().slice(0, 40)) };
+  match.setAttribute('data-brava-clicked', 'true');
   match.click();
   return { clicked: true };
 })()`;

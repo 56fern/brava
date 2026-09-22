@@ -127,13 +127,13 @@ describe("TaskRunner checkout automation", () => {
     const request = vi.fn(async () => undefined);
     runner.setChallengeHandlers({ request, cancel: vi.fn(async () => undefined) });
     const checkout = vi.fn()
-      .mockResolvedValueOnce({ status: "captcha" as const, challengeUrl, harvesterId: "harvester-1", message: "CAPTCHA detected" })
+      .mockResolvedValueOnce({ status: "captcha" as const, challengeUrl, harvesterId: "harvester-1", resumeStage: "checkout" as const, message: "CAPTCHA detected" })
       .mockResolvedValueOnce({ status: "completed" as const, message: "Checkout resumed" });
     runner.setCheckoutHandlers({ run: checkout });
 
     await runner.requestAutoCheckout("test-task", checkoutTask().productUrl);
     expect(request).toHaveBeenCalledWith("test-task", challengeUrl, "harvester-1");
-    expect(disk().tasks[0]).toMatchObject({ status: "awaiting_user", challengeStatus: "queued", challengeUrl });
+    expect(disk().tasks[0]).toMatchObject({ status: "awaiting_user", challengeStatus: "queued", challengeUrl, checkoutStage: "checkout" });
 
     const waiting = disk().tasks[0]!;
     waiting.challengeStatus = "solved";
@@ -141,5 +141,6 @@ describe("TaskRunner checkout automation", () => {
 
     expect(checkout).toHaveBeenCalledTimes(2);
     expect(disk().tasks[0]?.status).toBe("completed");
+    expect(disk().tasks[0]?.checkoutStage).toBeUndefined();
   });
 });
