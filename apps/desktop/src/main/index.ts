@@ -89,7 +89,8 @@ if (!hasSingleInstanceLock) {
   const harvesters = new HarvesterManager(store, () => mainWindow);
   const challenges = new ChallengeBroker(store, () => mainWindow, harvesters, {
     testMode: !app.isPackaged && process.env.BRAVA_CHALLENGE_TEST_MODE === "1",
-    checkoutHandoff: (taskId, harvesterId) => void runner.reportCartAttempt(taskId, harvesterId).catch(() => undefined),
+    checkoutHandoff: (taskId, harvesterId) =>
+      void runner.beginAutoCheckout(taskId, harvesterId).catch(() => undefined),
   });
   runner.setChallengeHandlers({
     request: (taskId, challengeUrl) => challenges.request(taskId, 0, challengeUrl),
