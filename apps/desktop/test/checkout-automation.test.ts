@@ -3,7 +3,10 @@ import {
   buildAddToCartScript,
   buildCaptchaDetectionScript,
   buildCheckoutFields,
+  buildCheckoutPageStateScript,
   buildFillFieldsScript,
+  buildGuestCheckoutScript,
+  buildOpenCartScript,
   buildProductPageScript,
   buildSubmitOrderScript,
   parseOrderConfirmation,
@@ -49,6 +52,9 @@ describe("checkout scripts", () => {
     for (const source of [
       buildProductPageScript("Blue / L", 2),
       buildAddToCartScript(),
+      buildOpenCartScript(),
+      buildGuestCheckoutScript(),
+      buildCheckoutPageStateScript(),
       buildCaptchaDetectionScript(),
       buildSubmitOrderScript(),
       buildFillFieldsScript(buildCheckoutFields({ id: "p", groupId: "g", name: "n", email: "e@e.com", firstName: "a", lastName: "b", address1: "x", address2: "", city: "c", region: "NY", postalCode: "1", country: "US", phone: "5" })),
@@ -71,25 +77,36 @@ describe("CheckoutAutomation engine", () => {
 
   it("completes checkout and reports the order number", async () => {
     const calls: string[] = [];
-    let submitted = false;
-    const allFields = buildCheckoutFields(profile as never).map((field) => field.label);
+    let page: "product" | "cart" | "guest" | "shipping" | "payment" | "review" | "confirmation" = "product";
     const webContents = {
       executeJavaScript: async (script: string) => {
-        if (script.includes("document.body?.innerText")) return submitted ? "Thank you for your order! Order Number: PC-998877 Order Total $54.99" : "";
-        if (script.includes("place your order")) { calls.push("submit"); submitted = true; return { clicked: true }; }
-        if (script.includes("add to cart") || script.includes("view cart")) { calls.push("cart"); return { clicked: true }; }
-        if (script.includes("const plan =")) { calls.push("fill"); return { filled: allFields, missing: [] }; }
+        if (script.includes("return { state: 'confirmation'")) return { state: page };
+        if (script.includes("challenges.cloudflare")) return { detected: false };
+        if (script.includes("document.body?.innerText")) return page === "confirmation" ? "Thank you for your order! Order Number: PC-998877 Order Total $54.99" : "";
+        if (script.includes("place your order")) { calls.push("place order"); page = "confirmation"; return { clicked: true }; }
+        if (script.includes("data-brava-clicked")) { calls.push("add to cart"); return { clicked: true }; }
+        if (script.includes("data-brava-opened-cart")) { calls.push("open cart"); page = "cart"; return { clicked: true }; }
+        if (script.includes("data-brava-guest-clicked")) {
+          if (page !== "guest") return { clicked: false };
+          calls.push("guest checkout"); page = "shipping"; return { clicked: true };
+        }
+        if (script.includes("data-brava-last-clicked")) {
+          calls.push(page === "cart" ? "checkout" : page === "shipping" ? "continue shipping" : "continue payment");
+          page = page === "cart" ? "guest" : page === "shipping" ? "payment" : "review";
+          return { clicked: true };
+        }
+        if (script.includes("const plan =")) { calls.push(page === "shipping" ? "fill shipping" : "fill payment"); return { filled: [], missing: [] }; }
         calls.push("variant"); return { variant: "Blue / L", quantity: "2" };
       },
-      getURL: () => submitted ? "https://www.pokemoncenter.com/confirmation" : "https://www.pokemoncenter.com/product/x",
-      getTitle: () => submitted ? "Thank You" : "Product",
+      getURL: () => `https://www.pokemoncenter.com/${page === "product" ? "product/x" : page === "cart" ? "cart" : page === "guest" ? "checkout" : page === "shipping" ? "checkout/address" : page === "payment" ? "checkout/payment" : page === "review" ? "checkout/review" : "confirmation"}`,
+      getTitle: () => page === "confirmation" ? "Thank You" : "Pokémon Center",
     };
     const automation = new CheckoutAutomation(noSleep);
     const outcome = await automation.run(task as never, profile as never, webContents);
     expect(outcome.status).toBe("completed");
-    expect(calls).toContain("cart");
-    expect(calls).toContain("fill");
-    expect(calls).toContain("submit");
+    expect(calls).toEqual(expect.arrayContaining(["add to cart", "open cart", "checkout", "guest checkout", "fill shipping", "continue shipping", "fill payment", "continue payment", "place order"]));
+    expect(calls.indexOf("open cart")).toBeLessThan(calls.indexOf("guest checkout"));
+    expect(calls.indexOf("fill shipping")).toBeLessThan(calls.indexOf("fill payment"));
   });
 
   it("declines without ordering when add-to-cart is missing", async () => {
@@ -125,23 +142,37 @@ describe("CheckoutAutomation engine", () => {
   });
 
   it("polls until delayed checkout fields render instead of blaming the profile", async () => {
-    const allFields = buildCheckoutFields(profile as never).map((field) => field.label);
     let fillAttempts = 0;
-    let submitted = false;
+    let page: "product" | "cart" | "guest" | "shipping" | "payment" | "review" | "confirmation" = "product";
     const webContents = {
       executeJavaScript: async (script: string) => {
+        if (script.includes("return { state: 'confirmation'")) return { state: page };
         if (script.includes("challenges.cloudflare")) return { detected: false };
-        if (script.includes("document.body?.innerText")) return submitted ? "Thank you for your order! Order Number: PC-123456" : "";
+        if (script.includes("document.body?.innerText")) return page === "confirmation" ? "Thank you for your order! Order Number: PC-123456" : "";
         if (script.includes("const plan =")) {
-          fillAttempts += 1;
-          return fillAttempts < 3 ? { filled: [], missing: allFields } : { filled: allFields, missing: [] };
+          if (page === "shipping") {
+            fillAttempts += 1;
+            return fillAttempts < 3 ? { filled: [], missing: ["First name"] } : { filled: ["First name"], missing: [] };
+          }
+          return { filled: ["Card number"], missing: [] };
         }
-        if (script.includes("place your order")) { submitted = true; return { clicked: true }; }
-        if (script.includes("add to cart") || script.includes("view cart")) return { clicked: true };
+        if (script.includes("place your order")) { page = "confirmation"; return { clicked: true }; }
+        if (script.includes("data-brava-clicked")) return { clicked: true };
+        if (script.includes("data-brava-opened-cart")) { page = "cart"; return { clicked: true }; }
+        if (script.includes("data-brava-guest-clicked")) {
+          if (page !== "guest") return { clicked: false };
+          page = "shipping"; return { clicked: true };
+        }
+        if (script.includes("data-brava-last-clicked")) {
+          if (page === "cart") page = "guest";
+          else if (page === "shipping" && fillAttempts >= 3) page = "payment";
+          else if (page === "payment") page = "review";
+          return { clicked: true };
+        }
         return {};
       },
-      getURL: () => submitted ? "https://www.pokemoncenter.com/confirmation" : "https://www.pokemoncenter.com/checkout",
-      getTitle: () => submitted ? "Thank You" : "Checkout",
+      getURL: () => `https://www.pokemoncenter.com/${page === "product" ? "product/x" : page === "cart" ? "cart" : page === "shipping" ? "checkout/address" : page === "payment" ? "checkout/payment" : page === "review" ? "checkout/review" : page === "confirmation" ? "confirmation" : "checkout"}`,
+      getTitle: () => page === "confirmation" ? "Thank You" : "Checkout",
     };
 
     const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);

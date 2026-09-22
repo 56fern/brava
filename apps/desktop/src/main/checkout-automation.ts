@@ -2,12 +2,17 @@ import type { CheckoutStage, Task } from "../shared/types.js";
 import {
   buildAddToCartScript,
   buildCaptchaDetectionScript,
-  buildCheckoutFields,
+  buildCheckoutPageStateScript,
   buildFillFieldsScript,
+  buildGuestCheckoutScript,
+  buildOpenCartScript,
+  buildPaymentFields,
   buildProductPageScript,
   buildProceedToCheckoutScript,
+  buildShippingFields,
   buildSubmitOrderScript,
   parseOrderConfirmation,
+  type CheckoutPageState,
 } from "../shared/checkout-scripts.js";
 
 /** Structural subset of Electron's webContents so the engine is unit-testable. */
@@ -36,13 +41,17 @@ type ClickResult = { clicked?: boolean; candidates?: unknown } | null;
 export class CheckoutAutomation {
   constructor(private readonly nap: (ms: number) => Promise<void> = delay) {}
 
-  private async readFields(webContents: CheckoutWebContents, profile: Parameters<typeof buildCheckoutFields>[0]): Promise<{ filled: string[]; missing: string[] }> {
-    const fields = buildCheckoutFields(profile);
+  private async readFields(webContents: CheckoutWebContents, fields: Parameters<typeof buildFillFieldsScript>[0]): Promise<{ filled: string[]; missing: string[] }> {
     const result = (await webContents.executeJavaScript(buildFillFieldsScript(fields), true)) as {
       filled?: string[];
       missing?: string[];
     } | null;
     return { filled: result?.filled ?? [], missing: result?.missing ?? [] };
+  }
+
+  private async pageState(webContents: CheckoutWebContents): Promise<CheckoutPageState> {
+    const result = (await webContents.executeJavaScript(buildCheckoutPageStateScript(), true)) as { state?: CheckoutPageState } | null;
+    return result?.state ?? "unknown";
   }
 
   private async captcha(webContents: CheckoutWebContents, resumeStage: CheckoutStage): Promise<Extract<CheckoutOutcome, { status: "captcha" }> | null> {
@@ -77,13 +86,13 @@ export class CheckoutAutomation {
   }
 
   /** Runs the full automatic checkout in the caller-supplied webContents. */
-  async run(task: Task, profile: Parameters<typeof buildCheckoutFields>[0], webContents: CheckoutWebContents): Promise<CheckoutOutcome> {
+  async run(task: Task, profile: Parameters<typeof buildShippingFields>[0], webContents: CheckoutWebContents): Promise<CheckoutOutcome> {
     const alreadyConfirmed = parseOrderConfirmation({ url: webContents.getURL(), title: webContents.getTitle(), bodyText: "" });
     if (alreadyConfirmed.confirmed) {
       const existingConfirmation = await this.confirmation(webContents);
       if (existingConfirmation) return existingConfirmation;
     }
-    let stage = task.checkoutStage ?? "product";
+    let stage: CheckoutStage = task.checkoutStage === "checkout" ? "cart" : task.checkoutStage === "submit" ? "review" : task.checkoutStage ?? "product";
 
     if (stage === "product") {
       const initialCaptcha = await this.captcha(webContents, "product");
@@ -96,41 +105,85 @@ export class CheckoutAutomation {
         const captcha = await this.captcha(webContents, "product");
         if (captcha) return captcha;
         const cart = (await webContents.executeJavaScript(buildAddToCartScript(), true)) as ClickResult;
-        if (cart?.clicked) { cartClicked = true; stage = "checkout"; break; }
+        if (cart?.clicked) { cartClicked = true; stage = "cart"; break; }
         await this.nap(pollIntervalMs);
       }
       if (!cartClicked) return { status: "declined", message: `Add to Cart did not appear after waiting on ${this.pageContext(webContents)}. Nothing was ordered.` };
     }
 
-    if (stage === "checkout") {
-      const required = buildCheckoutFields(profile).map((field) => field.label);
-      const filledLabels = new Set<string>();
-      let missing = required;
+    if (stage === "cart" || stage === "guest") {
+      await this.nap(pollIntervalMs * 2);
       for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
-        const captcha = await this.captcha(webContents, "checkout");
+        const detectedState = await this.pageState(webContents);
+        const resumeStage: CheckoutStage = detectedState === "guest" ? "guest" : "cart";
+        const captcha = await this.captcha(webContents, resumeStage);
         if (captcha) return captcha;
-        const filled = await this.readFields(webContents, profile);
-        filled.filled.forEach((label) => filledLabels.add(label));
-        missing = required.filter((label) => !filledLabels.has(label));
-        if (!missing.length) { stage = "submit"; break; }
-        await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
+        if (detectedState === "shipping" || detectedState === "payment" || detectedState === "review" || detectedState === "confirmation") {
+          stage = detectedState;
+          break;
+        }
+        if (detectedState === "guest") {
+          stage = "guest";
+          await webContents.executeJavaScript(buildGuestCheckoutScript(), true) as ClickResult;
+        } else if (detectedState === "cart") {
+          stage = "cart";
+          await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
+        } else {
+          const guest = await webContents.executeJavaScript(buildGuestCheckoutScript(), true) as ClickResult;
+          if (!guest?.clicked) {
+            const cart = await webContents.executeJavaScript(buildOpenCartScript(attempt >= 2), true) as ClickResult;
+            if (!cart?.clicked) await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
+          }
+        }
         await this.nap(pollIntervalMs);
       }
-      if (stage !== "submit") {
-        return { status: "declined", message: `Checkout form did not become ready after waiting on ${this.pageContext(webContents)}. Fields not found on the page: ${missing.join(", ")}. Nothing was ordered.` };
+      if (stage === "cart" || stage === "guest") {
+        return { status: "declined", message: `Brava added the item but could not reach Guest Checkout after waiting on ${this.pageContext(webContents)}. Nothing was ordered.` };
       }
     }
 
-    if (stage === "submit") {
+    if (stage === "shipping") {
+      const fields = buildShippingFields(profile);
+      let missing = fields.map((field) => field.label);
+      for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
+        const captcha = await this.captcha(webContents, "shipping");
+        if (captcha) return captcha;
+        const detectedState = await this.pageState(webContents);
+        if (detectedState === "payment" || detectedState === "review" || detectedState === "confirmation") { stage = detectedState; break; }
+        const filled = await this.readFields(webContents, fields);
+        missing = filled.missing;
+        await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
+        await this.nap(pollIntervalMs);
+      }
+      if (stage === "shipping") return { status: "declined", message: `Shipping could not continue after waiting on ${this.pageContext(webContents)}. Fields not found: ${missing.join(", ") || "none; check the page validation message"}. Nothing was ordered.` };
+    }
+
+    if (stage === "payment") {
+      const fields = buildPaymentFields(profile);
+      if (!fields.some((field) => field.label === "Card number")) return { status: "declined", message: "The assigned profile has no complete payment card. Nothing was ordered." };
+      let missing = fields.map((field) => field.label);
+      for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
+        const captcha = await this.captcha(webContents, "payment");
+        if (captcha) return captcha;
+        const detectedState = await this.pageState(webContents);
+        if (detectedState === "review" || detectedState === "confirmation") { stage = detectedState; break; }
+        const filled = await this.readFields(webContents, fields);
+        missing = filled.missing;
+        await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
+        await this.nap(pollIntervalMs);
+      }
+      if (stage === "payment") return { status: "declined", message: `Payment could not continue after waiting on ${this.pageContext(webContents)}. Fields not found: ${missing.join(", ") || "none; check the page validation message"}. Nothing was ordered.` };
+    }
+
+    if (stage === "review") {
       let submitted = false;
       for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
-        const captcha = await this.captcha(webContents, "submit");
+        const captcha = await this.captcha(webContents, "review");
         if (captcha) return captcha;
         const existingConfirmation = await this.confirmation(webContents);
         if (existingConfirmation) return existingConfirmation;
         const submit = (await webContents.executeJavaScript(buildSubmitOrderScript(), true)) as ClickResult;
         if (submit?.clicked) { submitted = true; stage = "confirmation"; break; }
-        await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
         await this.nap(pollIntervalMs);
       }
       if (!submitted) return { status: "declined", message: `Place Order did not appear after waiting on ${this.pageContext(webContents)}. Nothing was ordered.` };

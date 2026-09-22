@@ -18,19 +18,21 @@ export type CheckoutFieldScript = {
   sensitive?: boolean;
 };
 
+export type CheckoutPageState = "product" | "cart" | "guest" | "shipping" | "payment" | "review" | "confirmation" | "unknown";
+
 const escapeJs = (value: string): string => JSON.stringify(value);
 
 /** Field descriptors keyed by the profile/task data they receive. */
 export function buildCheckoutFields(profile: Profile, extra?: { address1Hint?: string }): CheckoutFieldScript[] {
   const billing = profile.payment?.billingSameAsShipping === false && profile.billing ? profile.billing : null;
   const fields: CheckoutFieldScript[] = [
-    { label: "First name", value: profile.firstName, selectors: ["[autocomplete='given-name']", "[name*='first' i][name*='name' i]", "#first_name", "#firstName", "[name*='fname' i]"] },
-    { label: "Last name", value: profile.lastName, selectors: ["[autocomplete='family-name']", "[name*='last' i][name*='name' i]", "#last_name", "#lastName", "[name*='lname' i]"] },
+    { label: "First name", value: profile.firstName, selectors: ["[autocomplete='given-name']", "[name*='first' i][name*='name' i]", "[id*='first' i][id*='name' i]", "#first_name", "#firstName", "[name*='fname' i]"] },
+    { label: "Last name", value: profile.lastName, selectors: ["[autocomplete='family-name']", "[name*='last' i][name*='name' i]", "[id*='last' i][id*='name' i]", "#last_name", "#lastName", "[name*='lname' i]"] },
     { label: "Email", value: profile.email, selectors: ["[autocomplete='email']", "[type='email']", "[name*='email' i]", "#email"] },
     { label: "Phone", value: profile.phone, selectors: ["[autocomplete='tel']", "[type='tel']", "[name*='phone' i]", "#phone"] },
     { label: "Address", value: profile.address1 + (extra?.address1Hint ? ` ${extra.address1Hint}` : ""), selectors: ["[autocomplete='address-line1']", "[name*='address' i][name*='1' i]", "#address1", "[name*='street' i]"] },
     { label: "Address line 2", value: profile.address2, selectors: ["[autocomplete='address-line2']", "[name*='address' i][name*='2' i]", "#address2"] },
-    { label: "City", value: profile.city, selectors: ["[autocomplete='address-level2']", "[name*='city' i]", "[name*='town' i]"] },
+    { label: "City", value: profile.city, selectors: ["[autocomplete='address-level2']", "[name*='city' i]", "[id*='city' i]", "[name*='town' i]", "[id*='town' i]"] },
     { label: "State / region", value: profile.region, selectors: ["[autocomplete='address-level1']", "[name*='state' i]", "[name*='region' i]", "[name*='province' i]"] },
     { label: "Postal code", value: profile.postalCode, selectors: ["[autocomplete='postal-code']", "[name*='zip' i]", "[name*='postal' i]", "[name*='postcode' i]"] },
     { label: "Country", value: profile.country, selectors: ["[autocomplete='country']", "[autocomplete='country-name']", "[name*='country' i]"] },
@@ -56,6 +58,18 @@ export function buildCheckoutFields(profile: Profile, extra?: { address1Hint?: s
   return fields.filter((field) => field.value.trim().length > 0);
 }
 
+const paymentLabels = new Set(["Cardholder name", "Card number", "Card expiry month", "Card expiry year", "Security code"]);
+
+/** Fields that belong on the shipping/contact step, excluding card inputs. */
+export function buildShippingFields(profile: Profile): CheckoutFieldScript[] {
+  return buildCheckoutFields(profile).filter((field) => !field.label.startsWith("Billing ") && !paymentLabels.has(field.label));
+}
+
+/** Fields that belong on the payment step, including a separate billing address when configured. */
+export function buildPaymentFields(profile: Profile): CheckoutFieldScript[] {
+  return buildCheckoutFields(profile).filter((field) => field.label.startsWith("Billing ") || paymentLabels.has(field.label));
+}
+
 /** Escape a string for embedding as a JS string literal in an injected script. */
 export const jsString = escapeJs;
 
@@ -78,10 +92,30 @@ export function buildFillFieldsScript(fields: CheckoutFieldScript[]): string {
     element.dispatchEvent(new Event('change', { bubbles: true }));
   };
   const visible = (element) => element && !element.disabled && element.type !== 'hidden' && element.offsetParent !== null;
+  const roots = [document];
+  for (let index = 0; index < roots.length; index += 1) {
+    const root = roots[index];
+    for (const element of root.querySelectorAll('*')) {
+      if (element.shadowRoot && !roots.includes(element.shadowRoot)) roots.push(element.shadowRoot);
+      if (element instanceof HTMLIFrameElement) {
+        try { if (element.contentDocument && !roots.includes(element.contentDocument)) roots.push(element.contentDocument); } catch {}
+      }
+    }
+  }
+  const query = (selector) => {
+    for (const root of roots) {
+      try { const node = root.querySelector(selector); if (node) return node; } catch {}
+    }
+    return null;
+  };
+  const labelText = (node) => {
+    const id = node.id;
+    const explicit = id ? roots.map((root) => { try { return root.querySelector('label[for="' + CSS.escape(id) + '"]'); } catch { return null; } }).find(Boolean) : null;
+    return [explicit?.textContent, node.closest('label')?.textContent, node.getAttribute('aria-label'), node.getAttribute('placeholder'), node.name, node.id].filter(Boolean).join(' ').toLowerCase();
+  };
   const fillField = (field) => {
     for (const selector of field.selectors) {
-      let node = null;
-      try { node = document.querySelector(selector); } catch { continue; }
+      const node = query(selector);
       if (!node) continue;
       if (node instanceof HTMLSelectElement) {
         const wanted = field.value.trim().toLowerCase();
@@ -93,11 +127,43 @@ export function buildFillFieldsScript(fields: CheckoutFieldScript[]): string {
       setNativeValue(node, field.value);
       return field.label;
     }
+    const wanted = field.label.toLowerCase().replace(' / region', '').replace(' line 2', '');
+    const tokens = wanted.split(/\s+/).filter((token) => token.length > 2 && token !== 'billing');
+    const controls = roots.flatMap((root) => [...root.querySelectorAll('input, select, textarea')]);
+    const node = controls.find((control) => visible(control) && tokens.every((token) => labelText(control).includes(token)));
+    if (node instanceof HTMLSelectElement) {
+      const value = field.value.trim().toLowerCase();
+      const option = [...node.options].find((entry) => entry.label.trim().toLowerCase() === value || entry.value.trim().toLowerCase() === value || entry.label.trim().toLowerCase().startsWith(value));
+      if (!option) return null;
+      setNativeValue(node, option.value);
+      return field.label;
+    }
+    if (node) { setNativeValue(node, field.value); return field.label; }
     return null;
   };
   const filled = [];
   for (const field of plan) { const label = fillField(field); if (label) filled.push(label); }
   return { filled, missing: plan.filter((field) => !filled.includes(field.label)).map((field) => field.label) };
+})()`;
+}
+
+/** Detects the current Pokémon Center checkout page without mutating it. */
+export function buildCheckoutPageStateScript(): string {
+  return `(() => {
+  const url = location.href.toLowerCase();
+  const visible = (element) => element && element.offsetParent !== null && !element.disabled;
+  const controls = [...document.querySelectorAll('button, a, input, select, textarea')].filter(visible);
+  const text = (element) => (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || element.value || '').trim().toLowerCase();
+  const hasText = (patterns) => controls.some((element) => patterns.some((pattern) => text(element).includes(pattern)));
+  const hasSelector = (selectors) => selectors.some((selector) => { try { return visible(document.querySelector(selector)); } catch { return false; } });
+  if (/confirmation|thank[- ]?you|order[- ]?(complete|confirmation)/.test(url) || /thank you for your order/i.test(document.body?.innerText || '')) return { state: 'confirmation', url: location.href };
+  if (['/checkout/review', '/checkout/summary', '/review'].some((part) => url.includes(part)) || hasText(['place order', 'place your order'])) return { state: 'review', url: location.href };
+  if (['/checkout/payment', '/checkout/billing', '/payment'].some((part) => url.includes(part)) || hasSelector(["[autocomplete='cc-number']", "[name*='card' i][name*='number' i]"])) return { state: 'payment', url: location.href };
+  if (['/checkout/address', '/checkout/shipping', '/checkout/delivery', '/address', '/shipping'].some((part) => url.includes(part)) || hasSelector(["[autocomplete='given-name']", "[name*='first' i][name*='name' i]", "[id*='first' i][id*='name' i]"])) return { state: 'shipping', url: location.href };
+  if (hasText(['guest checkout', 'checkout as guest', 'continue as guest'])) return { state: 'guest', url: location.href };
+  if (url.includes('/cart') || url.includes('/bag')) return { state: 'cart', url: location.href };
+  if (url.includes('/product/') || hasText(['add to cart', 'add to bag'])) return { state: 'product', url: location.href };
+  return { state: 'unknown', url: location.href };
 })()`;
 }
 
@@ -157,20 +223,65 @@ export function buildAddToCartScript(): string {
 })()`;
 }
 
+/** Opens the cart after Add to Cart, using the visible cart control or the official cart path. */
+export function buildOpenCartScript(allowDirectNavigation = false): string {
+  return `(() => {
+  const visible = (element) => element && element.offsetParent !== null && !element.disabled;
+  const candidates = [...document.querySelectorAll('a[href*="/cart" i], a[href*="/bag" i], button, [role="button"], [data-testid*="cart" i]')];
+  const match = candidates.find((element) => {
+    if (!visible(element) || element.hasAttribute('data-brava-opened-cart')) return false;
+    const text = (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || '').trim().toLowerCase();
+    const href = (element.getAttribute('href') || '').toLowerCase();
+    return href.includes('/cart') || href.includes('/bag') || ['view cart', 'go to cart', 'shopping cart', 'my cart', 'cart'].some((pattern) => text === pattern || text.includes(pattern));
+  });
+  if (match) {
+    match.setAttribute('data-brava-opened-cart', 'true');
+    match.click();
+    return { clicked: true, direct: false };
+  }
+  if (${JSON.stringify(allowDirectNavigation)} && location.origin.includes('pokemoncenter.com')) {
+    location.assign(new URL('/cart', location.origin).href);
+    return { clicked: true, direct: true };
+  }
+  return { clicked: false };
+})()`;
+}
+
+/** Selects the guest path instead of waiting for an account sign-in. */
+export function buildGuestCheckoutScript(): string {
+  const patterns = ["guest checkout", "checkout as guest", "continue as guest", "guest"];
+  return `(() => {
+  const patterns = ${JSON.stringify(patterns)};
+  const visible = (element) => element && element.offsetParent !== null && !element.disabled;
+  const candidates = [...document.querySelectorAll('button, [role="button"], a, input[type="submit"], input[type="button"]')];
+  const match = candidates.find((element) => {
+    if (!visible(element) || element.hasAttribute('data-brava-guest-clicked')) return false;
+    const text = (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || element.value || '').trim().toLowerCase();
+    return patterns.some((pattern) => text === pattern || text.includes(pattern));
+  });
+  if (!match) return { clicked: false };
+  match.setAttribute('data-brava-guest-clicked', 'true');
+  match.click();
+  return { clicked: true };
+})()`;
+}
+
 /** Script that clicks the control that advances from the cart to the checkout form. */
 export function buildProceedToCheckoutScript(): string {
-  const patterns = ["proceed to checkout", "proceed to secure checkout", "secure checkout", "continue to checkout", "continue to secure checkout", "continue to payment", "continue to delivery", "continue to shipping", "review order", "checkout", "view cart", "go to cart"];
+  const patterns = ["proceed to checkout", "proceed to secure checkout", "secure checkout", "continue to checkout", "continue to secure checkout", "continue to payment", "continue to delivery", "continue to shipping", "continue to review", "save and continue", "review order", "checkout", "continue", "next"];
   return `(() => {
   const patterns = ${JSON.stringify(patterns)};
   const visible = (element) => element && element.offsetParent !== null && !element.disabled;
   const candidates = [...document.querySelectorAll('button, [role="button"], a[href*="checkout" i], a[href*="cart" i], input[type="submit"]')];
   const match = candidates.find((element) => {
-    if (!visible(element) || element.hasAttribute('data-brava-clicked')) return false;
+    if (!visible(element)) return false;
+    const lastClicked = Number(element.getAttribute('data-brava-last-clicked') || 0);
+    if (Date.now() - lastClicked < 900) return false;
     const text = (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || element.value || '').trim().toLowerCase();
     return patterns.some((pattern) => text === pattern || text.includes(pattern));
   });
   if (!match) return { clicked: false, candidates: candidates.filter(visible).map((element) => (element.textContent || element.value || '').trim().slice(0, 40)).slice(0, 10) };
-  match.setAttribute('data-brava-clicked', 'true');
+  match.setAttribute('data-brava-last-clicked', String(Date.now()));
   match.click();
   return { clicked: true };
 })()`;

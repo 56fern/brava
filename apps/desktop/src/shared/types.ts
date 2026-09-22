@@ -59,7 +59,17 @@ export type ProxyTestTarget = "pokemon_center" | "google" | "cloudflare";
 export type ResourceGroup = { id: string; name: string };
 
 export type TaskStatus = "idle" | "queued" | "monitoring" | "found" | "adding_to_cart" | "carted" | "awaiting_user" | "completed" | "declined" | "stopped" | "error";
-export type CheckoutStage = "product" | "checkout" | "submit" | "confirmation";
+export type CheckoutStage =
+  | "product"
+  | "cart"
+  | "guest"
+  | "shipping"
+  | "payment"
+  | "review"
+  // Kept for tasks paused by an older Brava build.
+  | "checkout"
+  | "submit"
+  | "confirmation";
 
 export type TaskEvent = {
   status: TaskStatus;
