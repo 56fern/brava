@@ -53,6 +53,19 @@ describe("checkout scripts", () => {
     expect(script).toContain('"value":"Martinucci"');
   });
 
+  it("uses each checkout field's own DOM realm for iframe-safe assignment", () => {
+    const script = buildFillFieldsScript(buildCheckoutFields({
+      id: "p1", groupId: "g", name: "Jane Doe", email: "jane@example.com", firstName: "Jane", lastName: "Doe",
+      address1: "1 Main St", address2: "", city: "New York", region: "NY", postalCode: "10001", country: "US", phone: "555-0100",
+      payment: { cardholderName: "Jane Doe", brand: "Visa", number: "4242424242424242", last4: "4242", expiryMonth: "08", expiryYear: "2029", cvv: "123", billingSameAsShipping: true },
+    }));
+    expect(script).toContain("element.ownerDocument?.defaultView || window");
+    expect(script).toContain("view.HTMLInputElement.prototype");
+    expect(script).toContain("new view.Event('input'");
+    expect(script).toContain("node.tagName?.toLowerCase() === 'select'");
+    expect(script).not.toContain("element instanceof HTMLSelectElement");
+  });
+
   it("omits payment fields when the profile has no card", () => {
     const fields = buildCheckoutFields({
       id: "p1", groupId: "g", name: "Jane Doe", email: "jane@example.com", firstName: "Jane", lastName: "Doe",

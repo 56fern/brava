@@ -92,13 +92,18 @@ export function buildFillFieldsScript(fields: CheckoutFieldScript[]): string {
   return `(async () => {
   const plan = ${JSON.stringify(plan)};
   const setNativeValue = (element, value) => {
-    const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
-      : element instanceof HTMLSelectElement ? HTMLSelectElement.prototype
-      : HTMLInputElement.prototype;
+    // Payment controls can live in a same-origin iframe. DOM constructors are
+    // realm-specific, so using the top page's prototype on an iframe element
+    // throws "Illegal invocation". Always use the element's own window.
+    const view = element.ownerDocument?.defaultView || window;
+    const tag = element.tagName?.toLowerCase();
+    const proto = tag === 'textarea' ? view.HTMLTextAreaElement.prototype
+      : tag === 'select' ? view.HTMLSelectElement.prototype
+      : view.HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
     if (setter) setter.call(element, value); else element.value = value;
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
+    element.dispatchEvent(new view.Event('input', { bubbles: true }));
+    element.dispatchEvent(new view.Event('change', { bubbles: true }));
   };
   const visible = (element) => element && !element.disabled && element.type !== 'hidden' && element.offsetParent !== null;
   const roots = [document];
@@ -106,7 +111,7 @@ export function buildFillFieldsScript(fields: CheckoutFieldScript[]): string {
     const root = roots[index];
     for (const element of root.querySelectorAll('*')) {
       if (element.shadowRoot && !roots.includes(element.shadowRoot)) roots.push(element.shadowRoot);
-      if (element instanceof HTMLIFrameElement) {
+      if (element.tagName?.toLowerCase() === 'iframe') {
         try { if (element.contentDocument && !roots.includes(element.contentDocument)) roots.push(element.contentDocument); } catch {}
       }
     }
@@ -150,7 +155,7 @@ export function buildFillFieldsScript(fields: CheckoutFieldScript[]): string {
     return null;
   };
   const assign = (node, field) => {
-    if (node instanceof HTMLSelectElement) {
+    if (node.tagName?.toLowerCase() === 'select') {
       const wanted = field.value.trim().toLowerCase();
       const wantedDigits = wanted.replace(/\D/g, '');
       const option = [...node.options].find((entry) => {
