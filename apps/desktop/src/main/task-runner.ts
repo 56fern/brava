@@ -374,7 +374,7 @@ export class TaskRunner {
   async requestAutoCheckout(id: string, productUrl: string): Promise<void> {
     if (!this.checkoutHandlers) return;
     const task = await this.getTask(id);
-    if (!task || task.autoCheckout === false) return;
+    if (!task) return;
     if (!productUrl) {
       await this.update(id, task.status, "Automatic checkout needs a product URL - use Review to check out manually");
       return;
@@ -393,7 +393,7 @@ export class TaskRunner {
   async beginAutoCheckout(id: string, harvesterId: string): Promise<void> {
     if (!this.checkoutHandlers) return;
     const task = await this.getTask(id);
-    if (!task || task.status !== "adding_to_cart" || task.autoCheckout === false) return;
+    if (!task || task.status !== "adding_to_cart") return;
     let outcome: CheckoutOutcome;
     try {
       const profile = (await this.store.load()).profiles.find((item) => item.id === task.profileId);

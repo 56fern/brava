@@ -319,7 +319,6 @@ function Tasks({ data, save }: { data: AppData; save: (data: AppData) => Promise
       usePlaceholder: template.usePlaceholder,
       monitorKeywords: template.monitorKeywords,
       autoApplyMonitorSignal: template.autoApplyMonitorSignal,
-      autoCheckout: template.autoCheckout,
       variant: template.variant,
       quantity: template.quantity,
       effectiveQuantity: template.effectiveQuantity,
@@ -547,7 +546,7 @@ function TaskContextMenuLegacy({ task, profileEmail, x, y, onClose, onStart, onS
 }
 
 function TaskEditModal({ task, mode, profiles, proxies, bulkCount: _bulkCount, onCancel, onSave }: { task: Task; mode: "full" | "product"; profiles: Profile[]; proxies: ProxyConfig[]; bulkCount?: number; onCancel: () => void; onSave: (task: Task) => void }) {
-  const [form, setForm] = useState<TaskEditForm>({ productInput: task.productUrl || task.sku || "", sku: task.sku ?? "", usePlaceholder: task.usePlaceholder ?? false, monitorKeywords: task.monitorKeywords ?? task.name, autoApplyMonitorSignal: task.autoApplyMonitorSignal ?? false, autoCheckout: task.autoCheckout ?? true, productUrl: task.productUrl, variant: task.variant, quantity: task.quantity, profileId: task.profileId, proxyId: task.proxyId, waitForQueue: task.waitForQueue ?? false, queueCheckIntervalMinutes: 3, loopProfiles: task.loopProfiles ?? task.offerProfileFallback ?? false, offerProfileFallback: task.loopProfiles ?? task.offerProfileFallback ?? false });
+  const [form, setForm] = useState<TaskEditForm>({ productInput: task.productUrl || task.sku || "", sku: task.sku ?? "", usePlaceholder: task.usePlaceholder ?? false, monitorKeywords: task.monitorKeywords ?? task.name, autoApplyMonitorSignal: task.autoApplyMonitorSignal ?? false, productUrl: task.productUrl, variant: task.variant, quantity: task.quantity, profileId: task.profileId, proxyId: task.proxyId, waitForQueue: task.waitForQueue ?? false, queueCheckIntervalMinutes: 3, loopProfiles: task.loopProfiles ?? task.offerProfileFallback ?? false, offerProfileFallback: task.loopProfiles ?? task.offerProfileFallback ?? false });
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const at = new Date().toISOString();
@@ -556,12 +555,12 @@ function TaskEditModal({ task, mode, profiles, proxies, bulkCount: _bulkCount, o
     const value = productInput.trim();
     const isUrl = /^https?:\/\//i.test(value);
     const quantity = normalizeCartQuantity(form.quantity);
-    onSave({ ...task, ...stored, name: value, productUrl: isUrl ? value : "", sku: isUrl ? "" : value, usePlaceholder: false, variant: "", quantity, effectiveQuantity: quantity, maxCartQuantity: undefined, monitorKeywords: value, autoCheckout: form.autoCheckout, proxyPoolIds: form.proxyId ? [form.proxyId] : [], queueCheckIntervalMinutes: 3, offerProfileFallback: form.loopProfiles, updatedAt: at, history: [...(task.history ?? []), { status: task.status, message, at }].slice(-30) });
+    onSave({ ...task, ...stored, name: value, productUrl: isUrl ? value : "", sku: isUrl ? "" : value, usePlaceholder: false, variant: "", quantity, effectiveQuantity: quantity, maxCartQuantity: undefined, monitorKeywords: value, proxyPoolIds: form.proxyId ? [form.proxyId] : [], queueCheckIntervalMinutes: 3, offerProfileFallback: form.loopProfiles, updatedAt: at, history: [...(task.history ?? []), { status: task.status, message, at }].slice(-30) });
   };
   return createPortal(<div className="modal-backdrop task-builder-backdrop" onMouseDown={onCancel}><form className="task-builder-modal task-edit-modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}><header className="task-builder-head"><div className="task-builder-title"><div className="task-builder-icon">{mode === "product" ? <Box size={18} /> : <Pencil size={18} />}</div><div><h2>{mode === "product" ? "Product" : "Edit task"}</h2></div></div><button type="button" className="task-builder-close" aria-label="Close task editor" onClick={onCancel}><X size={18} /></button></header><div className="task-builder-body"><section className="task-builder-section"><div className="task-builder-section-head"><div><b>Setup</b></div></div><div className="task-builder-grid"><label className="task-builder-field wide"><span>SKU / Product URL</span><input required autoFocus value={form.productInput} onChange={(event) => setForm({ ...form, productInput: event.target.value })} /></label><label className="task-builder-field"><span>Mode</span><input readOnly value="Default" /></label><label className="task-builder-field"><span>Cart quantity</span><input aria-label="Cart quantity" type="number" min="1" max="999" value={form.quantity} onChange={(event) => setForm({ ...form, quantity: Number(event.target.value) })} /></label></div></section>{mode === "full" && <TaskEditOptions form={form} setForm={setForm} profiles={profiles} proxies={proxies} />}</div><footer className="task-builder-actions"><span /><div><button type="button" className="ghost" onClick={onCancel}>Cancel</button><button type="submit" className="primary">Save</button></div></footer></form></div>, document.body);
 }
 
-type TaskEditForm = { productInput: string; sku: string; usePlaceholder: boolean; monitorKeywords: string; autoApplyMonitorSignal: boolean; autoCheckout: boolean; productUrl: string; variant: string; quantity: number; profileId: string; proxyId: string; waitForQueue: boolean; queueCheckIntervalMinutes: number; loopProfiles: boolean; offerProfileFallback: boolean; offerProxyFallback?: boolean };
+type TaskEditForm = { productInput: string; sku: string; usePlaceholder: boolean; monitorKeywords: string; autoApplyMonitorSignal: boolean; productUrl: string; variant: string; quantity: number; profileId: string; proxyId: string; waitForQueue: boolean; queueCheckIntervalMinutes: number; loopProfiles: boolean; offerProfileFallback: boolean; offerProxyFallback?: boolean };
 
 function TaskEditOptions({ form, setForm, profiles, proxies }: { form: TaskEditForm; setForm: (form: TaskEditForm) => void; profiles: Profile[]; proxies: ProxyConfig[] }) {
   return <section className="task-builder-section">
@@ -573,7 +572,6 @@ function TaskEditOptions({ form, setForm, profiles, proxies }: { form: TaskEditF
     <div className="task-builder-section-head"><div><b>Options</b></div></div>
     <div className="task-builder-grid task-toggle-grid">
       <label className="task-option-card compact"><input type="checkbox" checked={form.autoApplyMonitorSignal} onChange={(event) => setForm({ ...form, autoApplyMonitorSignal: event.target.checked })} /><span><b>Auto-apply match</b><small>Use exact matches automatically.</small></span><i className="task-switch" /></label>
-      <label className="task-option-card compact"><input type="checkbox" checked={form.autoCheckout} onChange={(event) => setForm({ ...form, autoCheckout: event.target.checked })} /><span><b>Auto-checkout</b><small>Place the order automatically after the CAPTCHA clears.</small></span><i className="task-switch" /></label>
       <label className="task-option-card compact"><input type="checkbox" checked={form.waitForQueue} onChange={(event) => setForm({ ...form, waitForQueue: event.target.checked })} /><span><b>Wait for queue</b><small>Check queue status automatically.</small></span><i className="task-switch" /></label>
       <label className="task-option-card compact"><input type="checkbox" checked={form.loopProfiles} onChange={(event) => setForm({ ...form, loopProfiles: event.target.checked, offerProfileFallback: event.target.checked })} /><span><b>Loop profiles</b><small>Try the next profile after a decline.</small></span><i className="task-switch" /></label>
     </div>
@@ -619,7 +617,7 @@ function TaskRow({ task, actions = false, onDelete }: { task: Task; actions?: bo
 }
 
 function TaskForm({ profileGroups, profiles, proxyGroups, proxies, onCancel, onSave }: { profileGroups: ResourceGroup[]; profiles: Profile[]; proxyGroups: ResourceGroup[]; proxies: ProxyConfig[]; onCancel: () => void; onSave: (tasks: Task[]) => void }) {
-  const [form, setForm] = useState({ productInput: "", profileIds: [] as string[], proxyIds: [] as string[], batchQuantity: 1, cartQuantity: 1, autoApplyMonitorSignal: false, autoCheckout: true, waitForQueue: false, loopProfiles: false });
+  const [form, setForm] = useState({ productInput: "", profileIds: [] as string[], proxyIds: [] as string[], batchQuantity: 1, cartQuantity: 1, autoApplyMonitorSignal: false, waitForQueue: false, loopProfiles: false });
   const taskCount = Math.max(1, form.profileIds.length) * form.batchQuantity;
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -637,7 +635,6 @@ function TaskForm({ profileGroups, profiles, proxyGroups, proxies, onCancel, onS
       </div></section>
       <section className="task-builder-section"><div className="task-builder-section-head"><div><b>Options</b></div></div><div className="task-builder-grid task-toggle-grid">
         <label className="task-option-card compact"><input type="checkbox" checked={form.autoApplyMonitorSignal} onChange={(event) => setForm({ ...form, autoApplyMonitorSignal: event.target.checked })} /><span><b>Auto-apply match</b><small>Use an exact monitor match automatically.</small></span><i className="task-switch" /></label>
-        <label className="task-option-card compact"><input type="checkbox" checked={form.autoCheckout} onChange={(event) => setForm({ ...form, autoCheckout: event.target.checked })} /><span><b>Auto-checkout</b><small>Place the order automatically after the CAPTCHA clears.</small></span><i className="task-switch" /></label>
         <label className="task-option-card compact"><input type="checkbox" checked={form.waitForQueue} onChange={(event) => setForm({ ...form, waitForQueue: event.target.checked })} /><span><b>Wait for queue</b><small>Follow queue status when one is active.</small></span><i className="task-switch" /></label>
         <label className="task-option-card compact"><input type="checkbox" checked={form.loopProfiles} onChange={(event) => setForm({ ...form, loopProfiles: event.target.checked })} /><span><b>Loop profiles</b><small>Try the next profile after a decline.</small></span><i className="task-switch" /></label>
       </div></section>

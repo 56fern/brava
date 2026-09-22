@@ -84,12 +84,6 @@ export class ChallengeBroker {
     this.checkoutHandoff = handoff;
   }
 
-  /** True when this task runs hands-free checkout (autoCheckout on, the default). */
-  private async autoCheckoutFor(taskId: string): Promise<boolean> {
-    const task = await this.getTask(taskId);
-    return task?.autoCheckout !== false;
-  }
-
   snapshot(): ChallengeBrokerSnapshot {
     return {
       queued: this.requests.filter((request) => request.status === "queued").length,
@@ -161,8 +155,8 @@ export class ChallengeBroker {
       if (!request) throw new Error("This harvester has no assigned challenge.");
       request.status = "solved";
       request.expiresAt = undefined;
-      const autoCheckout = this.checkoutHandoff ? await this.autoCheckoutFor(request.taskId) : false;
-      if (autoCheckout) {
+      const checkoutHandoff = this.checkoutHandoff;
+      if (checkoutHandoff) {
         // The harvester window stays assigned to this task while the automatic
         // checkout runs, so dispatch never steals it mid-order. The handoff
         // releases it when checkout ends.
@@ -170,7 +164,7 @@ export class ChallengeBroker {
         await this.harvesters.incrementSolved(harvesterId);
         this.emit();
         await this.dispatchInternal();
-        this.checkoutHandoff?.(request.taskId, harvesterId);
+        checkoutHandoff(request.taskId, harvesterId);
         return;
       }
       request.assignedHarvesterId = undefined;

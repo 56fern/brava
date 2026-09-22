@@ -112,8 +112,6 @@ export type Task = {
   quantity: number;
   effectiveQuantity?: number;
   maxCartQuantity?: number;
-  /** When true (the default for new tasks), a matched signal drives add-to-cart → autofill → place order automatically. */
-  autoCheckout?: boolean;
   checkoutAmount?: number;
   orderNumber?: string;
   profileId: string;
