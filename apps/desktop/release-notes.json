@@ -1,13 +1,13 @@
 {
-  "version": "0.52.15",
-  "title": "Cart Checkout Navigation",
+  "version": "0.52.16",
+  "title": "Verified Add to Cart",
   "sections": [
     {
       "name": "Checkout",
       "items": [
-        "On the cart page, Brava now recognizes Check Out buttons even when their text spans lines or the button is fixed to the screen.",
-        "Cart navigation no longer mistakes Continue Shopping for the checkout action.",
-        "If the cart still cannot advance, the task log distinguishes a failed checkout click from a missing control and reports safe cart-control details."
+        "Brava waits for the storefront's cart count or add-success notice before opening the cart, with a bounded fallback when the page provides no signal.",
+        "An empty cart now ends the attempt before checkout and is reported as an unconfirmed add, not as a checkout-button failure.",
+        "Visible storefront errors after Add to Cart are included in the task log without exposing profile or payment fields."
       ]
     }
   ],

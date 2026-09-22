@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildAddToCartScript,
+  buildCartEvidenceScript,
   buildCaptchaDetectionScript,
   buildCartDiagnosticsScript,
   buildCheckoutFields,
@@ -84,6 +85,7 @@ describe("checkout scripts", () => {
     for (const source of [
       buildProductPageScript("Blue / L", 2),
       buildAddToCartScript(),
+      buildCartEvidenceScript(),
       buildOpenCartScript(),
       buildProceedToCheckoutScript(),
       buildCartDiagnosticsScript(),
@@ -144,6 +146,21 @@ describe("checkout scripts", () => {
       },
     ) as { empty: boolean; controls: string[] };
     expect(result).toEqual({ empty: false, controls: ["check out"] });
+  });
+
+  it("reads a cart badge without confusing the Add to Cart button for confirmation", () => {
+    const cartLink = {
+      offsetParent: {}, textContent: "Cart 1", getAttribute: (name: string) => name === "aria-label" ? "Cart 1" : null,
+      querySelectorAll: () => [],
+    };
+    const addButton = {
+      offsetParent: {}, textContent: "Add to Cart 9", getAttribute: (name: string) => name === "aria-label" ? "Add to Cart 9" : null,
+      querySelectorAll: () => [],
+    };
+    const result = new Function("document", `return ${buildCartEvidenceScript()}`)(
+      { querySelectorAll: (selector: string) => selector.includes('a[href*="/cart"') ? [addButton, cartLink] : [], body: { innerText: "Add to Cart" } },
+    ) as { count: number; added: boolean };
+    expect(result).toEqual({ count: 1, added: false });
   });
 
   it("parses order confirmation markers and rejects non-confirmation pages", () => {
@@ -226,8 +243,59 @@ describe("CheckoutAutomation engine", () => {
     };
     const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);
     expect(outcome.status).toBe("declined");
-    expect(outcome.message).toContain("cart page reports that it is empty");
-    expect(outcome.message).toContain("No checkout control could be clicked");
+    expect(outcome.message).toContain("reports an empty cart");
+    expect(outcome.message).toContain("checkout was not attempted");
+  });
+
+  it("waits for cart-count evidence before leaving the product page", async () => {
+    let page = "product";
+    let clickedAdd = false;
+    let evidenceReads = 0;
+    let evidenceReadsAtCartOpen = -1;
+    const webContents = {
+      executeJavaScript: async (script: string) => {
+        if (script.includes("challenges.cloudflare")) return { detected: false };
+        if (script.includes("return { state: 'confirmation'")) return { state: page };
+        if (script.includes("const cartLinks =")) {
+          evidenceReads += 1;
+          return { count: clickedAdd && evidenceReads >= 5 ? 1 : 0, added: false };
+        }
+        if (script.includes("data-brava-clicked")) { clickedAdd = true; return { clicked: true }; }
+        if (script.includes("data-brava-opened-cart")) {
+          evidenceReadsAtCartOpen = evidenceReads;
+          page = "cart";
+          return { clicked: true };
+        }
+        if (script.includes("your shopping cart is empty")) return { empty: true, controls: [] };
+        return { clicked: false };
+      },
+      getURL: () => `https://www.pokemoncenter.com/${page === "cart" ? "cart" : "product/x"}`,
+      getTitle: () => page,
+    };
+    const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);
+    expect(outcome.status).toBe("declined");
+    expect(evidenceReadsAtCartOpen).toBeGreaterThanOrEqual(5);
+  });
+
+  it("reports an add-to-cart site error without navigating away from the product", async () => {
+    let cartOpened = false;
+    const webContents = {
+      executeJavaScript: async (script: string) => {
+        if (script.includes("challenges.cloudflare")) return { detected: false };
+        if (script.includes("return { state: 'confirmation'")) return { state: "product" };
+        if (script.includes("const cartLinks =")) return { count: 0, added: false };
+        if (script.includes("data-brava-clicked")) return { clicked: true };
+        if (script.includes("const selectors = ['[role=\"alert\"]'")) return ["Unable to add item to cart"];
+        if (script.includes("data-brava-opened-cart")) cartOpened = true;
+        return { clicked: false };
+      },
+      getURL: () => "https://www.pokemoncenter.com/product/x",
+      getTitle: () => "Product",
+    };
+    const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);
+    expect(outcome.status).toBe("declined");
+    expect(outcome.message).toContain("Unable to add item to cart");
+    expect(cartOpened).toBe(false);
   });
 
   it("stops polling and clicking as soon as checkout is cancelled", async () => {
@@ -244,7 +312,7 @@ describe("CheckoutAutomation engine", () => {
     };
     const neverSleep = () => new Promise<void>(() => undefined);
     const running = new CheckoutAutomation(neverSleep).run(task as never, profile as never, webContents, controller.signal);
-    await vi.waitFor(() => expect(scriptCalls).toBe(4));
+    await vi.waitFor(() => expect(scriptCalls).toBe(5));
     const callsAtStop = scriptCalls;
     controller.abort();
 

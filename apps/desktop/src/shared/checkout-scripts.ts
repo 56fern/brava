@@ -282,6 +282,32 @@ export function buildAddToCartScript(): string {
 })()`;
 }
 
+/** Read-only evidence that an Add to Cart click changed the storefront's cart. */
+export function buildCartEvidenceScript(): string {
+  return `(() => {
+  const visible = (element) => element && (element.offsetParent != null || (element.getClientRects?.().length || 0) > 0);
+  const countFrom = (value) => {
+    const text = String(value || '').trim();
+    const match = text.match(/^(\\d{1,3})$/) || text.match(/(?:cart|bag)[^\\d]{0,16}(\\d{1,3})(?:\\D|$)/i);
+    return match ? Number(match[1]) : null;
+  };
+  const cartLinks = [...document.querySelectorAll('a[href*="/cart" i], a[href*="/bag" i], [aria-label*="cart" i]')]
+    .filter((element) => visible(element) && !/add to (?:cart|bag)/i.test(element.getAttribute('aria-label') || element.textContent || ''));
+  let count = null;
+  for (const link of cartLinks) {
+    const badges = [...link.querySelectorAll('[class*="badge" i], [class*="count" i], [data-testid*="count" i]')].filter(visible);
+    for (const value of [...badges.map((element) => element.textContent), link.getAttribute('aria-label'), link.textContent]) {
+      const found = countFrom(value);
+      if (found !== null) count = Math.max(count ?? 0, found);
+    }
+  }
+  const notices = [...document.querySelectorAll('[role="status"], [role="alert"], [aria-live], [class*="toast" i], [class*="notification" i]')]
+    .filter(visible).map((element) => (element.innerText || element.textContent || '').trim().toLowerCase());
+  const added = notices.some((text) => /(?:item|product|successfully|has been|was)?\\s*added to (?:your )?(?:cart|bag)/i.test(text));
+  return { count, added };
+})()`;
+}
+
 /** Opens the cart after Add to Cart, using the visible cart control or the official cart path. */
 export function buildOpenCartScript(allowDirectNavigation = false): string {
   return `(() => {

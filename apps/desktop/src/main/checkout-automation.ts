@@ -1,6 +1,7 @@
 import type { CheckoutStage, Task } from "../shared/types.js";
 import {
   buildAddToCartScript,
+  buildCartEvidenceScript,
   buildCaptchaDetectionScript,
   buildCartDiagnosticsScript,
   buildCheckoutPageStateScript,
@@ -162,6 +163,7 @@ export class CheckoutAutomation {
       if (task.variant.trim() || task.effectiveQuantity !== undefined) {
         await webContents.executeJavaScript(buildProductPageScript(task.variant, task.effectiveQuantity ?? task.quantity), true);
       }
+      const before = await webContents.executeJavaScript(buildCartEvidenceScript(), true) as { count?: number | null } | null;
       let cartClicked = false;
       for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
         this.assertRunning(signal);
@@ -172,11 +174,37 @@ export class CheckoutAutomation {
         await this.wait(pollIntervalMs, signal);
       }
       if (!cartClicked) return { status: "declined", message: `Add to Cart did not appear after waiting on ${this.pageContext(webContents)}. Nothing was ordered.` };
+      // The DOM click returns before the store's asynchronous add request
+      // settles. Opening /cart immediately can interrupt that request.
+      // Wait for a cart badge or success notice, with a bounded fallback for
+      // storefronts that do not expose either signal.
+      let cartAcknowledged = false;
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await this.wait(pollIntervalMs, signal);
+        const captcha = await this.captcha(webContents, "cart", signal);
+        if (captcha) return captcha;
+        const current = await this.pageState(webContents, signal);
+        if (current === "cart" || current === "guest" || current === "shipping" || current === "payment" || current === "review" || current === "confirmation") {
+          stage = current;
+          cartAcknowledged = true;
+          break;
+        }
+        const evidence = await webContents.executeJavaScript(buildCartEvidenceScript(), true) as { count?: number | null; added?: boolean } | null;
+        if (evidence?.added || (typeof evidence?.count === "number" && evidence.count > (before?.count ?? 0))) {
+          cartAcknowledged = true;
+          break;
+        }
+      }
+      if (!cartAcknowledged) {
+        const siteErrors = await this.siteErrors(webContents, signal);
+        if (siteErrors.length) return { status: "declined", message: `Pokémon Center did not confirm the Add to Cart click on ${this.pageContext(webContents)}. Site error: ${siteErrors.join(" | ")}. Checkout was not attempted.` };
+      }
     }
 
     if (stage === "cart" || stage === "guest") {
       await this.wait(pollIntervalMs * 2, signal);
       let checkoutControlClicked = false;
+      let emptyCartChecks = 0;
       for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
         this.assertRunning(signal);
         const detectedState = await this.pageState(webContents, signal);
@@ -193,6 +221,13 @@ export class CheckoutAutomation {
           checkoutControlClicked ||= Boolean(guest?.clicked);
         } else if (detectedState === "cart") {
           stage = "cart";
+          const cart = await webContents.executeJavaScript(buildCartDiagnosticsScript(), true) as { empty?: boolean } | null;
+          emptyCartChecks = cart?.empty ? emptyCartChecks + 1 : 0;
+          if (emptyCartChecks >= 10) {
+            const siteErrors = await this.siteErrors(webContents, signal);
+            return { status: "declined", message: `Brava clicked Add to Cart, but Pokémon Center reports an empty cart at ${webContents.getURL()}.${siteErrors.length ? ` Site error: ${siteErrors.join(" | ")}.` : ""} The item was not confirmed in the cart; checkout was not attempted.` };
+          }
+          if (cart?.empty) { await this.wait(pollIntervalMs, signal); continue; }
           const proceed = await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
           checkoutControlClicked ||= Boolean(proceed?.clicked);
         } else {
