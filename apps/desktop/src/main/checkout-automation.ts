@@ -2,6 +2,7 @@ import type { CheckoutStage, Task } from "../shared/types.js";
 import {
   buildAddToCartScript,
   buildCaptchaDetectionScript,
+  buildCartDiagnosticsScript,
   buildCheckoutPageStateScript,
   buildCheckoutErrorScript,
   buildFillFieldsScript,
@@ -175,6 +176,7 @@ export class CheckoutAutomation {
 
     if (stage === "cart" || stage === "guest") {
       await this.wait(pollIntervalMs * 2, signal);
+      let checkoutControlClicked = false;
       for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
         this.assertRunning(signal);
         const detectedState = await this.pageState(webContents, signal);
@@ -187,21 +189,35 @@ export class CheckoutAutomation {
         }
         if (detectedState === "guest") {
           stage = "guest";
-          await webContents.executeJavaScript(buildGuestCheckoutScript(), true) as ClickResult;
+          const guest = await webContents.executeJavaScript(buildGuestCheckoutScript(), true) as ClickResult;
+          checkoutControlClicked ||= Boolean(guest?.clicked);
         } else if (detectedState === "cart") {
           stage = "cart";
-          await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
+          const proceed = await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
+          checkoutControlClicked ||= Boolean(proceed?.clicked);
         } else {
           const guest = await webContents.executeJavaScript(buildGuestCheckoutScript(), true) as ClickResult;
+          checkoutControlClicked ||= Boolean(guest?.clicked);
           if (!guest?.clicked) {
             const cart = await webContents.executeJavaScript(buildOpenCartScript(attempt >= 2), true) as ClickResult;
-            if (!cart?.clicked) await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
+            if (!cart?.clicked) {
+              const proceed = await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
+              checkoutControlClicked ||= Boolean(proceed?.clicked);
+            }
           }
         }
         await this.wait(pollIntervalMs, signal);
       }
       if (stage === "cart" || stage === "guest") {
-        return { status: "declined", message: `Brava added the item but could not reach Guest Checkout after waiting on ${this.pageContext(webContents)}. Nothing was ordered.` };
+        let diagnostic = "";
+        try {
+          const cart = await webContents.executeJavaScript(buildCartDiagnosticsScript(), true) as { empty?: boolean; controls?: string[] } | null;
+          if (cart?.empty) diagnostic = " The cart page reports that it is empty.";
+          else if (cart?.controls?.length) diagnostic = ` Visible cart controls: ${cart.controls.join(" | ")}.`;
+          else diagnostic = " No checkout or guest controls were visible.";
+        } catch { /* Keep the original timeout if the page navigated during diagnostics. */ }
+        const action = checkoutControlClicked ? "A checkout control was clicked but the page did not advance." : "No checkout control could be clicked.";
+        return { status: "declined", message: `Brava clicked Add to Cart but could not reach Guest Checkout after waiting on ${this.pageContext(webContents)}. ${action}${diagnostic} Nothing was ordered.` };
       }
     }
 

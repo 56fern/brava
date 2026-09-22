@@ -327,22 +327,45 @@ export function buildGuestCheckoutScript(): string {
 
 /** Script that clicks the control that advances from the cart to the checkout form. */
 export function buildProceedToCheckoutScript(): string {
-  const patterns = ["proceed to checkout", "proceed to secure checkout", "secure checkout", "continue to checkout", "continue to secure checkout", "continue to payment", "continue to delivery", "continue to shipping", "continue to review", "save and continue", "review order", "checkout", "continue", "next"];
+  const cartPatterns = ["proceed to checkout", "proceed to check out", "proceed to secure checkout", "secure checkout", "continue to checkout", "continue to check out", "continue to secure checkout", "checkout", "check out"];
+  const laterPatterns = ["continue to payment", "continue to delivery", "continue to shipping", "continue to review", "save and continue", "review order", "continue", "next"];
   return `(() => {
-  const patterns = ${JSON.stringify(patterns)};
-  const visible = (element) => element && element.offsetParent !== null && !element.disabled;
-  const candidates = [...document.querySelectorAll('button, [role="button"], a[href*="checkout" i], a[href*="cart" i], input[type="submit"]')];
+  const visible = (element) => element && !element.disabled && (element.offsetParent != null || (element.getClientRects?.().length || 0) > 0);
+  const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+  const onCart = /\\/(?:cart|bag)(?:[\\/?#]|$)/.test(location.pathname.toLowerCase());
+  const patterns = onCart ? ${JSON.stringify(cartPatterns)} : ${JSON.stringify([...cartPatterns, ...laterPatterns])};
+  const candidates = [...document.querySelectorAll('button, [role="button"], a, [role="link"], input[type="submit"], input[type="button"], input[type="image"]')];
   const match = candidates.find((element) => {
     if (!visible(element)) return false;
     const lastClicked = Number(element.getAttribute('data-brava-last-clicked') || 0);
     if (Date.now() - lastClicked < 900) return false;
-    const text = (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || element.value || '').trim().toLowerCase();
-    return patterns.some((pattern) => text === pattern || text.includes(pattern));
+    const text = normalize([element.textContent, element.getAttribute('aria-label'), element.getAttribute('title'), element.value, element.getAttribute('alt')].filter(Boolean).join(' '));
+    const href = normalize(element.getAttribute('href'));
+    let checkoutHref = false;
+    if (onCart && href) {
+      try { checkoutHref = /^\\/checkout(?:\\/|$)/.test(new URL(href, location.href).pathname.toLowerCase()); } catch { /* Ignore invalid links. */ }
+    }
+    return patterns.some((pattern) => text === pattern || text.includes(pattern)) || checkoutHref;
   });
-  if (!match) return { clicked: false, candidates: candidates.filter(visible).map((element) => (element.textContent || element.value || '').trim().slice(0, 40)).slice(0, 10) };
+  if (!match) return { clicked: false, candidates: candidates.filter(visible).map((element) => normalize(element.textContent || element.getAttribute('aria-label') || element.value).slice(0, 40)).filter(Boolean).slice(0, 10) };
   match.setAttribute('data-brava-last-clicked', String(Date.now()));
   match.click();
   return { clicked: true };
+})()`;
+}
+
+/** Minimal cart diagnostics for a failed transition; never includes form values. */
+export function buildCartDiagnosticsScript(): string {
+  return `(() => {
+  const visible = (element) => element && (element.offsetParent != null || (element.getClientRects?.().length || 0) > 0);
+  const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+  const controls = [...document.querySelectorAll('button, [role="button"], a, input[type="submit"], input[type="button"]')]
+    .filter(visible)
+    .map((element) => normalize(element.textContent || element.getAttribute('aria-label') || element.value))
+    .filter((value) => /check.?out|cart|guest|continue|proceed/.test(value))
+    .map((value) => value.slice(0, 60)).slice(0, 6);
+  const body = normalize(document.body?.innerText);
+  return { empty: /(?:your cart is empty|your shopping cart is empty|there are no items in your cart)/.test(body), controls };
 })()`;
 }
 

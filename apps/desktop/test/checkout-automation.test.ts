@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildAddToCartScript,
   buildCaptchaDetectionScript,
+  buildCartDiagnosticsScript,
   buildCheckoutFields,
   buildCheckoutErrorScript,
   buildCheckoutPageStateScript,
   buildFillFieldsScript,
   buildGuestCheckoutScript,
   buildOpenCartScript,
+  buildProceedToCheckoutScript,
   buildProductPageScript,
   buildSubmitOrderScript,
   parseOrderConfirmation,
@@ -83,6 +85,8 @@ describe("checkout scripts", () => {
       buildProductPageScript("Blue / L", 2),
       buildAddToCartScript(),
       buildOpenCartScript(),
+      buildProceedToCheckoutScript(),
+      buildCartDiagnosticsScript(),
       buildGuestCheckoutScript(),
       buildCheckoutPageStateScript(),
       buildCaptchaDetectionScript(),
@@ -109,6 +113,37 @@ describe("checkout scripts", () => {
 
     expect(evaluate(false).detected).toBe(false);
     expect(evaluate(true).detected).toBe(true);
+  });
+
+  it("clicks a fixed-position CHECK OUT button on the cart despite its missing offset parent", () => {
+    let clicked = 0;
+    const attributes = new Map<string, string>();
+    const button = {
+      textContent: "  CHECK\n OUT  ", value: "", disabled: false, offsetParent: null,
+      getClientRects: () => [{ width: 200, height: 40 }],
+      getAttribute: (name: string) => attributes.get(name) ?? null,
+      setAttribute: (name: string, value: string) => { attributes.set(name, value); },
+      click: () => { clicked += 1; },
+    };
+    const continueShopping = {
+      ...button, textContent: "Continue Shopping", offsetParent: {},
+      click: () => { throw new Error("Continue Shopping must not be clicked"); },
+    };
+    const result = new Function("document", "location", `return ${buildProceedToCheckoutScript()}`)(
+      { querySelectorAll: () => [continueShopping, button] }, { pathname: "/cart" },
+    ) as { clicked: boolean };
+    expect(result.clicked).toBe(true);
+    expect(clicked).toBe(1);
+  });
+
+  it("reports only cart-control labels when checkout cannot advance", () => {
+    const result = new Function("document", `return ${buildCartDiagnosticsScript()}`)(
+      {
+        querySelectorAll: () => [{ textContent: "Check Out", offsetParent: {}, getAttribute: () => null }],
+        body: { innerText: "Shopping Cart: 1 item" },
+      },
+    ) as { empty: boolean; controls: string[] };
+    expect(result).toEqual({ empty: false, controls: ["check out"] });
   });
 
   it("parses order confirmation markers and rejects non-confirmation pages", () => {
@@ -175,6 +210,24 @@ describe("CheckoutAutomation engine", () => {
     const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);
     expect(outcome.status).toBe("declined");
     expect(outcome.status === "declined" && outcome.message).toMatch(/Add to Cart/i);
+  });
+
+  it("reports an empty cart instead of claiming checkout was submitted", async () => {
+    const webContents = {
+      executeJavaScript: async (script: string) => {
+        if (script.includes("challenges.cloudflare")) return { detected: false };
+        if (script.includes("return { state: 'confirmation'")) return { state: "cart" };
+        if (script.includes("data-brava-clicked")) return { clicked: true };
+        if (script.includes("your shopping cart is empty")) return { empty: true, controls: [] };
+        return { clicked: false };
+      },
+      getURL: () => "https://www.pokemoncenter.com/cart",
+      getTitle: () => "Shopping Cart | Pokémon Center",
+    };
+    const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);
+    expect(outcome.status).toBe("declined");
+    expect(outcome.message).toContain("cart page reports that it is empty");
+    expect(outcome.message).toContain("No checkout control could be clicked");
   });
 
   it("stops polling and clicking as soon as checkout is cancelled", async () => {

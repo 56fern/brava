@@ -1,8 +1,8 @@
-version: 0.52.14
+version: 0.52.15
 files:
-  - url: Brava-Setup-0.52.14.exe
-    sha512: IiKaDd40JtzxNoG2KiibZheOZl1ASvwuguXACV1Iy52v0DuV8lclKs45f6TuHA/5CFDaLyw0mikt0gk8Pi5NVg==
-    size: 98132886
-path: Brava-Setup-0.52.14.exe
-sha512: IiKaDd40JtzxNoG2KiibZheOZl1ASvwuguXACV1Iy52v0DuV8lclKs45f6TuHA/5CFDaLyw0mikt0gk8Pi5NVg==
-releaseDate: '2026-09-22T20:42:14.648Z'
+  - url: Brava-Setup-0.52.15.exe
+    sha512: b5JxSJpeuJmVNYUVPC7BWpnJQ20bgUuXm037gwPWkQ5eV5aL5AoSIc4039G7S/yWSj2o7yxXU601vIDpF3yluQ==
+    size: 98133458
+path: Brava-Setup-0.52.15.exe
+sha512: b5JxSJpeuJmVNYUVPC7BWpnJQ20bgUuXm037gwPWkQ5eV5aL5AoSIc4039G7S/yWSj2o7yxXU601vIDpF3yluQ==
+releaseDate: '2026-09-22T20:53:33.192Z'

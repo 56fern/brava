@@ -1,19 +1,13 @@
 {
-  "version": "0.52.14",
-  "title": "Fresh Cart and Submission Status",
+  "version": "0.52.15",
+  "title": "Cart Checkout Navigation",
   "sections": [
     {
-      "name": "Task sessions",
+      "name": "Checkout",
       "items": [
-        "Starting a new task clears the selected harvester's old cart cookies, site storage, and cache before checkout or queue monitoring begins.",
-        "A queue pass or CAPTCHA resume keeps the current task's session, so it does not lose its place mid-checkout.",
-        "After Brava restarts, an old Needs You or Submitting order task becomes Stopped with a reminder to verify the order before starting again."
-      ]
-    },
-    {
-      "name": "Checkout progress",
-      "items": [
-        "Tasks now show Submitting order after Place Order is clicked and before Checked out is confirmed."
+        "On the cart page, Brava now recognizes Check Out buttons even when their text spans lines or the button is fixed to the screen.",
+        "Cart navigation no longer mistakes Continue Shopping for the checkout action.",
+        "If the cart still cannot advance, the task log distinguishes a failed checkout click from a missing control and reports safe cart-control details."
       ]
     }
   ],

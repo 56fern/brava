@@ -1,7 +1,7 @@
 {
   "name": "@brava/desktop",
   "private": true,
-  "version": "0.52.14",
+  "version": "0.52.15",
   "description": "Brava product monitor and checkout companion",
   "main": "dist/main/index.js",
   "type": "module",
