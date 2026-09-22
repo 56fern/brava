@@ -9,8 +9,12 @@ import type { Harvester, HarvesterStatus, Task } from "../shared/types.js";
 import { buildCheckoutFields } from "../shared/checkout-scripts.js";
 import { parseHarvesterProxy } from "../shared/harvester-proxy.js";
 import { isPokemonCenterProductUrlForSku, resolvePokemonCenterProductUrl } from "../shared/product-input.js";
+import { isPokemonCenterQueuePage, type QueueGateOutcome, type QueueGateUpdate } from "./queue-gate.js";
 
 const officialHosts = new Set(["pokemoncenter.com", "www.pokemoncenter.com"]);
+const queueMonitorUrl = "https://www.pokemoncenter.com/";
+const queuePollIntervalMs = 1_000;
+const queueReloadIntervalMs = 15_000;
 const harvesterIconPath = (() => {
   return app.isPackaged
     ? join(process.resourcesPath, "app.asar", "build", "icon-large-v3.png")
@@ -78,6 +82,25 @@ export function permitsChallengeNavigation(value: string): boolean {
     return false;
   }
 }
+
+function permitsStoreNavigation(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    return url.protocol === "https:" && (officialHosts.has(hostname) || hostname === "queue-it.net" || hostname.endsWith(".queue-it.net"));
+  } catch {
+    return false;
+  }
+}
+
+const waitFor = (ms: number, signal: AbortSignal) => new Promise<void>((resolve, reject) => {
+  const cleanup = () => { clearTimeout(timer); signal.removeEventListener("abort", abort); };
+  const finish = () => { cleanup(); resolve(); };
+  const abort = () => { cleanup(); reject(new DOMException("Task stopped by user", "AbortError")); };
+  const timer = setTimeout(finish, ms);
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
+});
 
 export class HarvesterManager {
   private readonly windows = new Map<string, BrowserWindow>();
@@ -207,7 +230,7 @@ export class HarvesterManager {
       existing.show();
       existing.focus();
       const current = (await this.store.load()).harvesters.find((item) => item.id === id);
-      if (current && !current.assignedRequestId) await this.onAvailable?.(id);
+      if (current && !current.assignedRequestId && !current.assignedTaskId) await this.onAvailable?.(id);
       return;
     }
 
@@ -220,7 +243,8 @@ export class HarvesterManager {
       await this.update(id, "error", error instanceof Error ? error.message : "Invalid harvester proxy");
       return;
     }
-    await this.update(id, harvester.assignedRequestId ? "busy" : "opening", harvester.assignedRequestId ? "Opening assigned CAPTCHA" : "Opening CAPTCHA inbox");
+    const reserved = Boolean(harvester.assignedRequestId || harvester.assignedTaskId);
+    await this.update(id, reserved ? "busy" : "opening", harvester.assignedRequestId ? "Opening assigned CAPTCHA" : harvester.assignedTaskId ? "Opening assigned task" : "Opening CAPTCHA inbox");
 
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
     const bounds = harvesterBounds(tileIndex ?? this.windows.size, display.workArea);
@@ -251,7 +275,7 @@ export class HarvesterManager {
     }
 
     browser.webContents.on("will-navigate", (event, url) => {
-      if (!url.startsWith("data:text/html") && !permitsChallengeNavigation(url)) event.preventDefault();
+      if (!url.startsWith("data:text/html") && !(this.activeCheckouts.has(id) ? permitsStoreNavigation(url) : permitsChallengeNavigation(url))) event.preventDefault();
     });
     browser.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     browser.webContents.on("page-title-updated", (event) => {
@@ -279,8 +303,13 @@ export class HarvesterManager {
           this.watchForSolvedChallenge(id, browser);
           return;
         }
+        const latest = (await this.store.load()).harvesters.find((item) => item.id === id);
+        if (latest?.assignedTaskId) {
+          await this.update(id, "busy", latest.statusMessage || "Running assigned task");
+          return;
+        }
         await this.update(id, "open", "Waiting for CAPTCHA");
-        if (!assignedUrl) await this.onAvailable?.(id);
+        if (!assignedUrl && !latest?.assignedRequestId) await this.onAvailable?.(id);
       })();
     });
     browser.webContents.on("did-fail-load", (_event, code, description) => {
@@ -359,14 +388,70 @@ export class HarvesterManager {
     await this.incrementSolved(id);
   }
 
-  async runCheckoutOnAvailable(task: Task, profile: Parameters<typeof buildCheckoutFields>[0]): Promise<CheckoutOutcome> {
+  async waitForQueueOnAvailable(task: Task, signal: AbortSignal, onUpdate: (update: QueueGateUpdate) => void | Promise<void>): Promise<QueueGateOutcome> {
+    const data = await this.store.load();
+    const harvester = data.harvesters.find((item) => item.status !== "busy" && item.status !== "error" && !item.assignedRequestId && !item.assignedTaskId);
+    if (!harvester) return { status: "failed", message: "No available harvester can monitor the Pokémon Center queue; open or create a harvester and restart the task." };
+    await this.update(harvester.id, "busy", "Starting Pokémon Center queue monitoring", { assignedTaskId: task.id });
+    await this.open(harvester.id);
+    return this.waitForQueue(harvester.id, task, signal, onUpdate);
+  }
+
+  private async waitForQueue(id: string, task: Task, signal: AbortSignal, onUpdate: (update: QueueGateUpdate) => void | Promise<void>): Promise<QueueGateOutcome> {
+    const browser = this.windows.get(id);
+    if (!browser || browser.isDestroyed()) return { status: "failed", message: "The harvester window closed before queue monitoring could start." };
+    this.clearSolveWatcher(id);
+    await this.clearChallengeCss(id, browser);
+    this.activeCheckouts.add(id);
+    await this.update(id, "busy", "Monitoring for the Pokémon Center queue", { assignedTaskId: task.id });
+    const stopNavigation = () => { if (!browser.isDestroyed()) browser.webContents.stop(); };
+    signal.addEventListener("abort", stopNavigation, { once: true });
+    let passed = false;
+    try {
+      await browser.webContents.loadURL(queueMonitorUrl);
+      let sawQueue = false;
+      let lastReloadAt = Date.now();
+      await onUpdate({ active: false });
+      while (!signal.aborted && !browser.isDestroyed()) {
+        const snapshot = await browser.webContents.executeJavaScript(`({ title: document.title || '', bodyText: document.body?.innerText || '' })`, true) as { title?: string; bodyText?: string } | null;
+        const currentUrl = browser.webContents.getURL();
+        const queueActive = isPokemonCenterQueuePage(currentUrl, snapshot?.title ?? "", snapshot?.bodyText ?? "");
+        if (queueActive) {
+          if (!sawQueue) await onUpdate({ active: true });
+          sawQueue = true;
+        } else if (sawQueue && permitsChallengeNavigation(currentUrl)) {
+          passed = true;
+          await this.update(id, "busy", "Queue passed · opening the task product", { assignedTaskId: task.id });
+          return { status: "passed", harvesterId: id };
+        } else if (Date.now() - lastReloadAt >= queueReloadIntervalMs) {
+          await browser.webContents.loadURL(queueMonitorUrl);
+          lastReloadAt = Date.now();
+        }
+        await waitFor(queuePollIntervalMs, signal);
+      }
+      return { status: "cancelled" };
+    } catch (error) {
+      if (signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return { status: "cancelled" };
+      return { status: "failed", message: `Pokémon Center queue monitoring failed - ${error instanceof Error ? error.message : "unknown error"}` };
+    } finally {
+      signal.removeEventListener("abort", stopNavigation);
+      this.activeCheckouts.delete(id);
+      if (!passed && !browser.isDestroyed()) {
+        await this.update(id, "open", signal.aborted ? "Queue monitoring stopped" : "Queue monitoring ended", { assignedTaskId: undefined });
+        await this.showWaiting(id, browser).catch(() => undefined);
+      }
+    }
+  }
+
+  async runCheckoutOnAvailable(task: Task, profile: Parameters<typeof buildCheckoutFields>[0], signal?: AbortSignal): Promise<CheckoutOutcome> {
     const data = await this.store.load();
     const harvester = data.harvesters.find((item) => item.status !== "busy" && item.status !== "error" && !item.assignedRequestId && !item.assignedTaskId);
     if (!harvester) {
       return { status: "declined", message: "No available harvester can run checkout; open or create a harvester and retry the task." };
     }
+    await this.update(harvester.id, "busy", "Starting automatic checkout", { assignedTaskId: task.id });
     await this.open(harvester.id);
-    const outcome = await this.runCheckout(harvester.id, task, profile);
+    const outcome = await this.runCheckout(harvester.id, task, profile, signal);
     return outcome.status === "captcha" ? { ...outcome, harvesterId: harvester.id } : outcome;
   }
 
@@ -376,37 +461,44 @@ export class HarvesterManager {
    * harvester. The window stays on the live page so a human can take over if the
    * automation declines.
    */
-  async runCheckout(id: string, task: Task, profile: Parameters<typeof buildCheckoutFields>[0]): Promise<CheckoutOutcome> {
+  async runCheckout(id: string, task: Task, profile: Parameters<typeof buildCheckoutFields>[0], signal?: AbortSignal): Promise<CheckoutOutcome> {
     const browser = this.windows.get(id);
     if (!browser || browser.isDestroyed()) {
       return { status: "declined", message: "The harvester window closed before checkout could start; restart the task to retry." };
     }
+    if (signal?.aborted) return { status: "cancelled", message: "Checkout stopped by user" };
     this.clearSolveWatcher(id);
     await this.clearChallengeCss(id, browser);
     this.activeCheckouts.add(id);
     await this.update(id, "busy", "Automatic checkout running", { assignedTaskId: task.id });
+    const stopNavigation = () => { if (!browser.isDestroyed()) browser.webContents.stop(); };
+    signal?.addEventListener("abort", stopNavigation, { once: true });
+    let outcome: CheckoutOutcome;
     try {
       const currentUrl = browser.webContents.getURL();
       const onProductPage = permitsChallengeNavigation(currentUrl) && isPokemonCenterProductUrlForSku(currentUrl, task.sku);
       if (!onProductPage) {
         const productUrl = resolvePokemonCenterProductUrl(task.productUrl, task.sku, task.name);
         if (!permitsChallengeNavigation(productUrl)) throw new Error("the task has no official product URL to open");
+        if (signal?.aborted) throw new DOMException("Checkout stopped by user", "AbortError");
         await browser.webContents.loadURL(productUrl);
+        if (signal?.aborted) throw new DOMException("Checkout stopped by user", "AbortError");
         await browser.webContents.executeJavaScript("document.readyState === 'complete' || new Promise((resolve) => addEventListener('load', resolve, { once: true }))", true).catch(() => undefined);
       }
-      const outcome = await this.checkout.run(task, profile, browser.webContents);
-      this.activeCheckouts.delete(id);
-      const assigned = this.assignedChallengeUrls.get(id);
-      await this.update(id, browser.isDestroyed() ? "closed" : "open", outcome.status === "completed" ? `Checkout complete · ${outcome.message}` : outcome.status === "captcha" ? "CAPTCHA detected · waiting for the user" : "Checkout paused · continue manually", { assignedRequestId: undefined, assignedTaskId: undefined });
-      if (assigned && outcome.status !== "captcha") this.assignedChallengeUrls.delete(id);
-      if (assigned && outcome.status !== "captcha") await this.showWaiting(id, browser);
-      return outcome.status === "captcha" ? { ...outcome, harvesterId: id } : outcome;
+      outcome = await this.checkout.run(task, profile, browser.webContents, signal);
     } catch (error) {
+      outcome = signal?.aborted || (error instanceof DOMException && error.name === "AbortError")
+        ? { status: "cancelled", message: "Checkout stopped by user" }
+        : { status: "declined", message: error instanceof Error ? error.message : "Automatic checkout failed" };
+    } finally {
+      signal?.removeEventListener("abort", stopNavigation);
       this.activeCheckouts.delete(id);
-      const message = error instanceof Error ? error.message : "Automatic checkout failed";
-      await this.update(id, browser.isDestroyed() ? "closed" : "open", `Checkout paused · ${message}`, { assignedRequestId: undefined, assignedTaskId: undefined });
-      return { status: "declined", message };
     }
+    const assigned = this.assignedChallengeUrls.get(id);
+    await this.update(id, browser.isDestroyed() ? "closed" : "open", outcome.status === "completed" ? `Checkout complete · ${outcome.message}` : outcome.status === "captcha" ? "CAPTCHA detected · waiting for the user" : outcome.status === "cancelled" ? "Checkout stopped" : "Checkout paused · continue manually", { assignedRequestId: undefined, assignedTaskId: undefined });
+    if (assigned && outcome.status !== "captcha") this.assignedChallengeUrls.delete(id);
+    if (!browser.isDestroyed() && (outcome.status === "cancelled" || (assigned && outcome.status !== "captcha"))) await this.showWaiting(id, browser).catch(() => undefined);
+    return outcome.status === "captcha" ? { ...outcome, harvesterId: id } : outcome;
   }
 
   async openOnLaunch(): Promise<void> {

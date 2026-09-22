@@ -83,7 +83,7 @@ describe("TaskRunner checkout automation", () => {
 
     await runner.beginAutoCheckout("test-task", "harvester-1");
 
-    expect(checkout).toHaveBeenCalledWith(expect.objectContaining({ id: "test-task" }), expect.objectContaining({ id: "profile-1" }), "harvester-1");
+    expect(checkout).toHaveBeenCalledWith(expect.objectContaining({ id: "test-task" }), expect.objectContaining({ id: "profile-1" }), "harvester-1", expect.anything());
     expect(disk().tasks[0]).toMatchObject({ status: "completed", orderNumber: "ORDER-1", checkoutAmount: 42 });
   });
 
@@ -98,7 +98,7 @@ describe("TaskRunner checkout automation", () => {
     await runner.beginAutoCheckout("test-task", "harvester-legacy");
 
     expect(checkout).toHaveBeenCalledTimes(1);
-    expect(checkout).toHaveBeenCalledWith(expect.objectContaining({ autoCheckout: false }), expect.objectContaining({ id: "profile-1" }), "harvester-legacy");
+    expect(checkout).toHaveBeenCalledWith(expect.objectContaining({ autoCheckout: false }), expect.objectContaining({ id: "profile-1" }), "harvester-legacy", expect.anything());
     expect(disk().tasks[0]?.status).toBe("completed");
   });
 
@@ -114,7 +114,7 @@ describe("TaskRunner checkout automation", () => {
     await runner.requestAutoCheckout("test-task", "https://www.pokemoncenter.com/-");
 
     expect(checkout).toHaveBeenCalledTimes(1);
-    expect(checkout).toHaveBeenCalledWith(expect.objectContaining({ productUrl: expect.stringContaining("/product/TEST-SKU/") }), expect.anything(), undefined);
+    expect(checkout).toHaveBeenCalledWith(expect.objectContaining({ productUrl: expect.stringContaining("/product/TEST-SKU/") }), expect.anything(), undefined, expect.anything());
     expect(request).not.toHaveBeenCalled();
     expect(disk().tasks[0]?.status).toBe("completed");
   });
@@ -142,5 +142,47 @@ describe("TaskRunner checkout automation", () => {
     expect(checkout).toHaveBeenCalledTimes(2);
     expect(disk().tasks[0]?.status).toBe("completed");
     expect(disk().tasks[0]?.checkoutStage).toBeUndefined();
+  });
+
+  it("aborts an in-progress checkout when the task is stopped", async () => {
+    const { store, disk } = harness(checkoutTask());
+    const { TaskRunner } = await import("../src/main/task-runner.js");
+    const runner = new TaskRunner(store, () => null);
+    let observedSignal: AbortSignal | undefined;
+    const checkout = vi.fn((_task: Task, _profile: Profile, _harvesterId?: string, signal?: AbortSignal) => new Promise<{ status: "cancelled"; message: string }>((resolve) => {
+      observedSignal = signal;
+      signal?.addEventListener("abort", () => resolve({ status: "cancelled", message: "Checkout stopped by user" }), { once: true });
+    }));
+    runner.setCheckoutHandlers({ run: checkout });
+
+    const running = runner.beginAutoCheckout("test-task", "harvester-1");
+    await vi.waitFor(() => expect(checkout).toHaveBeenCalledTimes(1));
+    await runner.stop("test-task");
+    await running;
+
+    expect(observedSignal?.aborted).toBe(true);
+    expect(disk().tasks[0]).toMatchObject({ status: "stopped", statusMessage: "Stopped by user" });
+  });
+
+  it("waits for a live queue, passes it, and checks out in the same harvester", async () => {
+    const { store, disk } = harness({ ...checkoutTask(), status: "idle", waitForQueue: true });
+    const { TaskRunner } = await import("../src/main/task-runner.js");
+    const runner = new TaskRunner(store, () => null);
+    const wait = vi.fn(async (_task: Task, _signal: AbortSignal, onUpdate: (update: { active: boolean }) => void | Promise<void>) => {
+      await onUpdate({ active: false });
+      await onUpdate({ active: true });
+      return { status: "passed" as const, harvesterId: "harvester-queue" };
+    });
+    const checkout = vi.fn(async () => ({ status: "completed" as const, message: "Queue checkout complete" }));
+    runner.setQueueHandlers({ wait });
+    runner.setCheckoutHandlers({ run: checkout });
+
+    await runner.start("test-task");
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => expect(disk().tasks[0]?.status).toBe("completed"));
+
+    expect(wait).toHaveBeenCalledTimes(1);
+    expect(checkout).toHaveBeenCalledWith(expect.objectContaining({ id: "test-task" }), expect.anything(), "harvester-queue", expect.anything());
+    expect(disk().tasks[0]?.history?.map((event) => event.status)).toEqual(expect.arrayContaining(["monitoring", "queued", "found", "adding_to_cart", "completed"]));
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildAddToCartScript,
   buildCaptchaDetectionScript,
@@ -135,6 +135,29 @@ describe("CheckoutAutomation engine", () => {
     const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);
     expect(outcome.status).toBe("declined");
     expect(outcome.status === "declined" && outcome.message).toMatch(/Add to Cart/i);
+  });
+
+  it("stops polling and clicking as soon as checkout is cancelled", async () => {
+    const controller = new AbortController();
+    let scriptCalls = 0;
+    const webContents = {
+      executeJavaScript: async (script: string) => {
+        scriptCalls += 1;
+        if (script.includes("challenges.cloudflare")) return { detected: false };
+        return { clicked: false };
+      },
+      getURL: () => "https://www.pokemoncenter.com/product/x",
+      getTitle: () => "Product",
+    };
+    const neverSleep = () => new Promise<void>(() => undefined);
+    const running = new CheckoutAutomation(neverSleep).run(task as never, profile as never, webContents, controller.signal);
+    await vi.waitFor(() => expect(scriptCalls).toBe(4));
+    const callsAtStop = scriptCalls;
+    controller.abort();
+
+    await expect(running).rejects.toMatchObject({ name: "AbortError" });
+    await Promise.resolve();
+    expect(scriptCalls).toBe(callsAtStop);
   });
 
   it("selects Credit/Debit Card before filling card details", () => {

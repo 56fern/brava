@@ -96,7 +96,8 @@ if (!hasSingleInstanceLock) {
     request: (taskId, challengeUrl, preferredHarvesterId) => challenges.request(taskId, 0, challengeUrl, preferredHarvesterId),
     cancel: (taskId) => challenges.cancelTask(taskId),
   });
-  runner.setCheckoutHandlers({ run: (task, profile, harvesterId) => harvesterId ? harvesters.runCheckout(harvesterId, task, profile) : harvesters.runCheckoutOnAvailable(task, profile) });
+  runner.setQueueHandlers({ wait: (task, signal, onUpdate) => harvesters.waitForQueueOnAvailable(task, signal, onUpdate) });
+  runner.setCheckoutHandlers({ run: (task, profile, harvesterId, signal) => harvesterId ? harvesters.runCheckout(harvesterId, task, profile, signal) : harvesters.runCheckoutOnAvailable(task, profile, signal) });
   harvesters.setLifecycleHandlers({
     onAvailable: () => challenges.dispatch(),
     onClosed: (harvesterId, redistribute) => challenges.releaseHarvester(harvesterId, redistribute),

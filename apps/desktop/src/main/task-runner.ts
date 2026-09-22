@@ -7,6 +7,7 @@ import { publishPublicCheckout } from "./public-checkout-client.js";
 import { SharedScheduler, type SchedulerStats } from "./shared-scheduler.js";
 import { resolveCartQuantity } from "../shared/cart-quantity.js";
 import { resolvePokemonCenterProductUrl } from "../shared/product-input.js";
+import type { QueueGateOutcome, QueueGateUpdate } from "./queue-gate.js";
 const defaultQueueCheckIntervalMinutes = 3;
 const cartResultTimeoutMs = 15_000;
 const automaticCheckoutTimeoutMs = 2 * 60_000;
@@ -56,8 +57,10 @@ export class TaskRunner {
     request: (taskId: string, challengeUrl: string, preferredHarvesterId?: string) => Promise<void>;
     cancel: (taskId: string) => Promise<void>;
   } | undefined;
-  private checkoutHandlers: { run: (task: Task, profile: Profile, harvesterId?: string) => Promise<CheckoutOutcome> } | undefined;
+  private checkoutHandlers: { run: (task: Task, profile: Profile, harvesterId?: string, signal?: AbortSignal) => Promise<CheckoutOutcome> } | undefined;
+  private queueHandlers: { wait: (task: Task, signal: AbortSignal, onUpdate: (update: QueueGateUpdate) => void | Promise<void>) => Promise<QueueGateOutcome> } | undefined;
   private productProbe: ((sku: string) => Promise<ProductSignal | null>) | undefined;
+  private readonly operationControllers = new Map<string, AbortController>();
 
   constructor(
     private readonly store: AppStore,
@@ -77,6 +80,26 @@ export class TaskRunner {
 
   setProductProbe(probe: (sku: string) => Promise<ProductSignal | null>): void {
     this.productProbe = probe;
+  }
+
+  setQueueHandlers(handlers: { wait: (task: Task, signal: AbortSignal, onUpdate: (update: QueueGateUpdate) => void | Promise<void>) => Promise<QueueGateOutcome> }): void {
+    this.queueHandlers = handlers;
+  }
+
+  private beginOperation(id: string): AbortController {
+    this.operationControllers.get(id)?.abort();
+    const controller = new AbortController();
+    this.operationControllers.set(id, controller);
+    return controller;
+  }
+
+  private finishOperation(id: string, controller: AbortController): void {
+    if (this.operationControllers.get(id) === controller) this.operationControllers.delete(id);
+  }
+
+  private cancelOperation(id: string): void {
+    this.operationControllers.get(id)?.abort();
+    this.operationControllers.delete(id);
   }
 
   private async update(id: string, status: TaskStatus, statusMessage: string, patch: Partial<Task> = {}): Promise<Task | undefined> {
@@ -116,6 +139,8 @@ export class TaskRunner {
   stats(): SchedulerStats { return this.scheduler.stats(); }
   async recover(): Promise<number> { return typeof this.store.recoverInterruptedTasks === "function" ? this.store.recoverInterruptedTasks() : 0; }
   async shutdown(): Promise<void> {
+    for (const controller of this.operationControllers.values()) controller.abort();
+    this.operationControllers.clear();
     this.scheduler.shutdown();
     if (this.updateTimer) clearTimeout(this.updateTimer);
     this.updateTimer = undefined;
@@ -127,6 +152,7 @@ export class TaskRunner {
   }
 
   async start(id: string): Promise<void> {
+    this.cancelOperation(id);
     this.clear(id);
     await this.challengeHandlers?.cancel(id);
     const current = await this.getTask(id);
@@ -134,8 +160,8 @@ export class TaskRunner {
     const waitingForSku = waitingForLiveSku(current);
     const message = current.waitForQueue
       ? waitingForSku
-        ? "Monitoring placeholder · queue handling is enabled"
-        : "Monitoring official product signals · queue handling is enabled"
+        ? "Monitoring for a live Pokémon Center queue · add the SKU before access is granted"
+        : "Monitoring for a live Pokémon Center queue before opening the product"
       : waitingForSku
         ? "Monitoring placeholder · add the live SKU when available"
         : "Monitoring official product signals";
@@ -149,7 +175,8 @@ export class TaskRunner {
       proxyFailureCount: 0,
     });
     if (!task) throw new Error("Task not found");
-    if (!waitingForSku && this.productProbe) this.scheduleProductProbe(id, 0);
+    if (task.waitForQueue) this.scheduleQueueGate(id);
+    else if (!waitingForSku && this.productProbe) this.scheduleProductProbe(id, 0);
   }
 
   async startMany(ids: string[]): Promise<void> {
@@ -225,6 +252,7 @@ export class TaskRunner {
   }
 
   async stop(id: string): Promise<void> {
+    this.cancelOperation(id);
     this.clear(id);
     await this.challengeHandlers?.cancel(id);
     await this.update(id, "stopped", "Stopped by user", { challengeStatus: undefined, challengeUrl: undefined, assignedHarvesterId: undefined, checkoutStage: undefined });
@@ -326,7 +354,7 @@ export class TaskRunner {
     const resumeMonitoring = ["queued", "monitoring"].includes(task.status) && waitingForLiveSku(task);
     const staysQueued = task.status === "queued";
     await this.update(id, staysQueued ? "queued" : resumeMonitoring ? "monitoring" : task.status, staysQueued ? `Live SKU ${normalized} applied - queue tracking continues` : resumeMonitoring ? `Live SKU ${normalized} applied - monitoring` : `SKU updated to ${normalized}`, { sku: normalized, usePlaceholder: false, pendingMonitorSignal: undefined });
-    if (resumeMonitoring && !staysQueued) this.clear(id);
+    if (resumeMonitoring && !staysQueued && !task.waitForQueue) this.clear(id);
   }
 
   async handleProductSignal(signal: ProductSignal): Promise<void> {
@@ -343,6 +371,19 @@ export class TaskRunner {
       if (task.pendingMonitorSignal?.id === signal.id) continue;
       const exactSku = !waitingForLiveSku(task) && task.sku?.trim().toUpperCase() === signal.sku.trim().toUpperCase();
       if (exactSku || task.autoApplyMonitorSignal) {
+        if (task.waitForQueue) {
+          await this.update(task.id, task.status, task.status === "queued"
+            ? `Monitor matched ${signal.sku} · waiting to pass the live queue`
+            : `Monitor matched ${signal.sku} · still monitoring for a live queue`, {
+            name: signal.name,
+            sku: signal.sku,
+            productUrl: signal.productUrl,
+            usePlaceholder: false,
+            pendingMonitorSignal: undefined,
+            ...cartQuantityPatch(task, signal.maxCartQuantity),
+          });
+          continue;
+        }
         const nextStatus = task.status === "queued" ? "queued" : "found";
         const message = task.status === "queued"
           ? `Monitor matched ${signal.sku} - queue tracking continues`
@@ -364,6 +405,10 @@ export class TaskRunner {
     await this.updateSku(id, signal.sku);
     const refreshed = await this.getTask(id);
     if (!refreshed) return;
+    if (refreshed.waitForQueue && ["monitoring", "queued"].includes(refreshed.status)) {
+      await this.update(id, refreshed.status, `Applied verified monitor match ${signal.sku} · waiting for the live queue`, { productUrl: signal.productUrl, pendingMonitorSignal: undefined, ...cartQuantityPatch(refreshed, signal.maxCartQuantity) });
+      return;
+    }
     const nextStatus = refreshed.status === "queued" ? "queued" : "found";
     await this.update(id, nextStatus, `Applied verified monitor match ${signal.sku}`, { productUrl: signal.productUrl, pendingMonitorSignal: undefined, ...cartQuantityPatch(refreshed, signal.maxCartQuantity) });
     if (nextStatus !== "queued") {
@@ -377,10 +422,10 @@ export class TaskRunner {
    * product URL hands off to the harvester/checkout pipeline instead of
    * parking silently in the Found state.
    */
-  async requestAutoCheckout(id: string, productUrl: string): Promise<void> {
+  async requestAutoCheckout(id: string, productUrl: string, harvesterId = ""): Promise<void> {
     if (!this.checkoutHandlers) return;
     const task = await this.getTask(id);
-    if (!task) return;
+    if (!task || task.status === "stopped") return;
     const checkoutUrl = resolvePokemonCenterProductUrl(productUrl || task.productUrl, task.sku, task.name);
     if (!checkoutUrl) {
       await this.update(id, task.status, "Automatic checkout needs a product URL - use Review to check out manually");
@@ -393,7 +438,7 @@ export class TaskRunner {
     this.clear(id);
     await this.update(id, "adding_to_cart", `${cartQuantityMessage(task)} · automatic checkout starting`, { ...cartQuantityPatch(task, task.maxCartQuantity), productUrl: checkoutUrl, checkoutStage: "product" });
     this.scheduler.schedule(`${id}:automatic-checkout-timeout`, automaticCheckoutTimeoutMs, () => this.expireCartAttempt(id));
-    await this.beginAutoCheckout(id, "");
+    await this.beginAutoCheckout(id, harvesterId);
   }
 
   /** Runs the automatic checkout for a task already in adding_to_cart on the assigned harvester window. */
@@ -405,18 +450,24 @@ export class TaskRunner {
       task = await this.update(id, "adding_to_cart", "CAPTCHA solved · automatic checkout resuming", { assignedHarvesterId: harvesterId }) ?? task;
     }
     if (task.status !== "adding_to_cart") return;
+    const controller = this.beginOperation(id);
     let outcome: CheckoutOutcome;
     try {
       const profile = (await this.store.load()).profiles.find((item) => item.id === task.profileId);
       if (!profile) throw new Error("the task has no assigned profile");
       outcome = this.checkoutHandlers
-        ? await this.checkoutHandlers.run(task, profile, harvesterId || undefined)
+        ? await this.checkoutHandlers.run(task, profile, harvesterId || undefined, controller.signal)
         : { status: "declined" as const, message: "No checkout automation is wired - use Review to check out manually" };
     } catch (error) {
-      outcome = { status: "declined", message: `Automatic checkout failed - ${error instanceof Error ? error.message : "unknown error"}` };
+      outcome = controller.signal.aborted
+        ? { status: "cancelled", message: "Checkout stopped by user" }
+        : { status: "declined", message: `Automatic checkout failed - ${error instanceof Error ? error.message : "unknown error"}` };
+    } finally {
+      this.finishOperation(id, controller);
     }
     const stillRunning = await this.getTask(id);
     if (stillRunning && stillRunning.status !== "adding_to_cart") return;
+    if (outcome.status === "cancelled") return;
     if (outcome.status === "captcha") {
       this.clear(id);
       await this.reportChallenge(id, outcome.challengeUrl, outcome.harvesterId || harvesterId || undefined, outcome.resumeStage);
@@ -424,7 +475,7 @@ export class TaskRunner {
     else await this.decline(id, outcome.message);
   }
 
-  setCheckoutHandlers(handlers: { run: (task: Task, profile: Profile, harvesterId?: string) => Promise<CheckoutOutcome> }): void {
+  setCheckoutHandlers(handlers: { run: (task: Task, profile: Profile, harvesterId?: string, signal?: AbortSignal) => Promise<CheckoutOutcome> }): void {
     this.checkoutHandlers = handlers;
   }
 
@@ -489,6 +540,75 @@ export class TaskRunner {
     const task = await this.getTask(id);
     if (!task || task.status !== "adding_to_cart") return;
     await this.update(id, "error", "Cart attempt timed out - no cart result was received; restart the task to retry");
+  }
+
+  private scheduleQueueGate(id: string): void {
+    this.scheduler.schedule(`${id}:queue-gate`, 0, () => this.runQueueGate(id));
+  }
+
+  private async runQueueGate(id: string): Promise<void> {
+    const task = await this.getTask(id);
+    if (!task || !task.waitForQueue || task.status !== "monitoring") return;
+    if (!this.queueHandlers) {
+      await this.update(id, "error", "Queue monitoring is unavailable; restart Brava and try again.");
+      return;
+    }
+    const controller = this.beginOperation(id);
+    let outcome: QueueGateOutcome;
+    try {
+      outcome = await this.queueHandlers.wait(task, controller.signal, async (queue) => {
+        const current = await this.getTask(id);
+        if (!current || controller.signal.aborted || !current.waitForQueue || !["monitoring", "queued"].includes(current.status)) return;
+        if (!queue.active) {
+          await this.update(id, "monitoring", "No queue is live yet · monitoring Pokémon Center", {
+            queueStartedAt: undefined,
+            queuePosition: undefined,
+            queueEtaSeconds: undefined,
+            queueLastCheckedAt: new Date().toISOString(),
+            queueNextCheckAt: undefined,
+          });
+          return;
+        }
+        const checkedAt = new Date().toISOString();
+        await this.update(id, "queued", "Queue is live · waiting for Pokémon Center access", {
+          queueStartedAt: current.queueStartedAt ?? checkedAt,
+          queuePosition: queue.position,
+          queueEtaSeconds: queue.etaSeconds,
+          queueLastCheckedAt: checkedAt,
+          queueNextCheckAt: undefined,
+        });
+      });
+    } catch (error) {
+      outcome = controller.signal.aborted
+        ? { status: "cancelled" }
+        : { status: "failed", message: `Queue monitoring failed - ${error instanceof Error ? error.message : "unknown error"}` };
+    } finally {
+      this.finishOperation(id, controller);
+    }
+    if (outcome.status === "cancelled") return;
+    const current = await this.getTask(id);
+    if (!current || !current.waitForQueue || !["monitoring", "queued"].includes(current.status)) return;
+    if (outcome.status === "failed") {
+      await this.update(id, "error", outcome.message);
+      return;
+    }
+    if (waitingForLiveSku(current)) {
+      await this.update(id, "error", "Queue passed, but this task has no live SKU to open.");
+      return;
+    }
+    const productUrl = resolvePokemonCenterProductUrl(current.productUrl, current.sku, current.name);
+    if (!productUrl) {
+      await this.update(id, "error", "Queue passed, but Brava could not build the Pokémon Center product URL.");
+      return;
+    }
+    await this.update(id, "found", "Queue passed · opening the task product", {
+      queuePosition: undefined,
+      queueEtaSeconds: undefined,
+      queueLastCheckedAt: new Date().toISOString(),
+      queueNextCheckAt: undefined,
+      productUrl,
+    });
+    await this.requestAutoCheckout(id, productUrl, outcome.harvesterId);
   }
 
   private scheduleProductProbe(id: string, delayMs: number): void {

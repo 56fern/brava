@@ -41,7 +41,7 @@ describe("TaskRunner queue workflow", () => {
 
     await runner.start("task-1");
     expect(disk.tasks[0]?.status).toBe("monitoring");
-    expect(disk.tasks[0]?.statusMessage).toContain("queue handling is enabled");
+    expect(disk.tasks[0]?.statusMessage).toContain("Monitoring for a live Pokémon Center queue");
     expect(disk.tasks[0]?.queueStartedAt).toBeUndefined();
     expect(disk.tasks[0]?.queueCheckIntervalMinutes).toBe(3);
     expect(disk.tasks[0]?.queueNextCheckAt).toBeUndefined();
@@ -311,7 +311,23 @@ describe("TaskRunner queue workflow", () => {
     const runner = new TaskRunner(store, () => null);
     await runner.handleProductSignal({ sequence: 1, id: "signal-1", site: "pokemon_center_us", sku: "10-12345-100", name: "Celebration Box", productUrl: "https://www.pokemoncenter.com/product/10-12345-100/celebration-box", available: true, source: "test", detectedAt: new Date().toISOString() });
     expect(disk.tasks[0]).toMatchObject({ status: "queued", sku: "10-12345-100", usePlaceholder: false });
-    expect(disk.tasks[0]?.statusMessage).toContain("queue tracking continues");
+    expect(disk.tasks[0]?.statusMessage).toContain("waiting to pass the live queue");
+  });
+
+  it("does not bypass queue monitoring when a pending product match is applied", async () => {
+    const signal = { sequence: 1, id: "signal-queue", site: "pokemon_center_us" as const, sku: "10-12345-100", name: "Celebration Box", productUrl: "https://www.pokemoncenter.com/product/10-12345-100/celebration-box", available: true, source: "test", detectedAt: new Date().toISOString() };
+    let disk: AppData = { profiles: [], proxies: [], taskGroups: [], tasks: [{ ...baseTask(), status: "monitoring", pendingMonitorSignal: signal }], harvesters: [] };
+    const store = {
+      load: vi.fn(async () => structuredClone(disk)),
+      save: vi.fn(async (next: AppData) => { disk = structuredClone(next); return next; }),
+    } as unknown as AppStore;
+    const { TaskRunner } = await import("../src/main/task-runner.js");
+    const runner = new TaskRunner(store, () => null);
+
+    await runner.applyMonitorSignal("task-1");
+
+    expect(disk.tasks[0]).toMatchObject({ status: "monitoring", sku: signal.sku, productUrl: signal.productUrl });
+    expect(disk.tasks[0]?.statusMessage).toContain("waiting for the live queue");
   });
 
   it("reduces a requested quantity to a discovered Pokémon Center cart limit", async () => {
