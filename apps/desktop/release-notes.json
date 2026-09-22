@@ -1,13 +1,13 @@
 {
-  "version": "0.52.10",
-  "title": "Payment Card Entry Fix",
+  "version": "0.52.11",
+  "title": "Framed Payment Form Fix",
   "sections": [
     {
       "name": "Automatic checkout",
       "items": [
-        "Credit/Debit Card is now selected once, allowing Pokémon Center's card form to finish rendering before Brava fills it.",
-        "Card number and CVV are typed into their inputs after the payment form appears.",
-        "Expiration month and year are selected from Pokémon Center's separate dropdowns, including two-digit year values."
+        "Fixed the Illegal invocation error that occurred after selecting Credit/Debit Card.",
+        "Card number, CVV, expiration month, and expiration year now use the Pokémon Center payment frame's own browser context.",
+        "Automatic checkout continues to review after the framed card controls are filled."
       ]
     }
   ],
