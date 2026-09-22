@@ -1,20 +1,19 @@
 {
-  "version": "0.52.2",
-  "title": "Task Editing and Checkout Update",
+  "version": "0.52.3",
+  "title": "Task Mode and Product Link Fix",
   "sections": [
     {
       "name": "Checkout",
       "items": [
-        "Checkout now starts immediately and pauses only when a real CAPTCHA needs to be solved.",
-        "Checkout resumes automatically in the same harvester after the CAPTCHA is completed."
+        "Checkout now repairs incomplete Pokémon Center links and opens the exact SKU product page.",
+        "A reused harvester only keeps its current product page when that page matches the task SKU."
       ]
     },
     {
-      "name": "Tasks",
+      "name": "Webhooks",
       "items": [
-        "Editing a profile or proxy no longer clears the task SKU.",
-        "Task editing now uses grouped profile and proxy selectors.",
-        "Product links display their SKU, and task rows show the proxy group and active proxy."
+        "The Mode field now reflects the task's actual mode.",
+        "Product links now use the corrected SKU-bearing Pokémon Center URL."
       ]
     }
   ],
