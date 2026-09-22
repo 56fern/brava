@@ -311,7 +311,16 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .context-rename button:disabled { opacity: .4; cursor: default; }
 .harvester-rows .manager-row.context-selected { border-color: #328fff; background: linear-gradient(90deg, #122b46, #101a28); box-shadow: inset 2px 0 #2692ff; }
 .task-context-separator { height: 1px; margin: 4px 5px; background: #2a303a; }
-.task-edit-modal { width: min(650px, calc(100vw - 36px)); }
+.task-edit-modal { width: min(980px, calc(100vw - 36px)); height: min(720px, calc(100vh - 36px)); }
+.task-edit-modal .profile-multi-menu { position: relative; top: auto; margin-top: 6px; }
+.task-edit-modal .resource-group-list { max-height: 340px; }
+.editable-profile-row { cursor: pointer; }
+.editable-profile-row .table-actions button { width: 24px; }
+.editable-profile-row:focus-visible { border-color: #328fff; outline: 2px solid #328fff44; outline-offset: 1px; }
+.profile-form-tabs { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border: 1px solid #303846; border-radius: 8px; background: #0a0e14; }
+.profile-form-tabs button { min-height: 34px; border: 0; border-radius: 6px; color: #8e99aa; background: transparent; font-size: 10px; font-weight: 700; cursor: pointer; }
+.profile-form-tabs button:hover { color: #dce5f2; background: #151c26; }
+.profile-form-tabs button.active { color: white; background: #356ff0; box-shadow: 0 6px 18px #245fd044; }
 .task-log-backdrop { z-index: 310; }
 .task-log-modal { width: min(650px, calc(100vw - 36px)); max-height: min(700px, calc(100vh - 44px)); display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; overflow: hidden; border: 1px solid #303846; border-radius: 11px; background: #0d1117; box-shadow: 0 34px 110px #000d; animation: modalPop .26s var(--ease-out) both; }
 .task-log-modal > header { min-height: 78px; display: flex; align-items: center; justify-content: space-between; padding: 17px 20px; border-bottom: 1px solid #252c36; background: linear-gradient(120deg, #121720, #0e1218); }

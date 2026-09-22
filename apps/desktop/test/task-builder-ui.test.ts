@@ -63,4 +63,11 @@ describe("simplified task builder UI", () => {
     expect(app).toContain("const updateTask = (patch: TaskEditPatch)");
     expect(app).toContain("const updateAllTasks = (patch: TaskEditPatch)");
   });
+
+  it("gives grouped task assignment controls a full-size editor", async () => {
+    const styles = await readFile(new URL("../src/renderer/src/styles.css", import.meta.url), "utf8");
+    expect(styles).toContain(".task-edit-modal { width: min(980px");
+    expect(styles).toContain(".task-edit-modal .profile-multi-menu { position: relative");
+    expect(styles).toContain("max-height: 340px");
+  });
 });

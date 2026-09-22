@@ -23,6 +23,19 @@ describe("profile list virtualization", () => {
     expect(activeProfiles).toContain("<VirtualProfileRows");
     expect(activeProfiles).toContain("data-total-rows={profiles.length}");
     expect(activeProfiles).toContain("data-rendered-rows={visible.length}");
+    expect(activeProfiles).toContain("editingProfile");
+    expect(activeProfiles).toContain("onEdit={setEditingProfile}");
+    expect(activeProfiles).toContain("profiles.map((item) => item.id === profile.id ? profile : item)");
+  });
+
+  it("opens a tabbed editor from each profile row", async () => {
+    const app = await readFile(new URL("../src/renderer/src/App.tsx", import.meta.url), "utf8");
+    const editor = app.slice(app.indexOf("function GroupedProfileForm("), app.indexOf("function Proxies("));
+    expect(app).toContain("editable-profile-row");
+    expect(app).toContain("onClick={onEdit}");
+    expect(editor).toContain('"shipping" | "billing" | "card"');
+    expect(editor).toContain('title={profile ? "Edit profile" : "New profile"}');
+    expect(editor).toContain('profile?.id ?? crypto.randomUUID()');
   });
 
   it("animates the list surface without delaying individual virtual rows", async () => {

@@ -32,7 +32,7 @@ describe("checkout scripts", () => {
       payment: { cardholderName: "Jane Doe", brand: "Visa", number: "4242424242424242", last4: "4242", expiryMonth: "08", expiryYear: "2029", cvv: "123", billingSameAsShipping: true },
     });
     const labels = fields.map((field) => field.label);
-    expect(labels).toEqual(expect.arrayContaining(["First name", "Email", "Phone", "Address", "City", "State / region", "Postal code", "Country", "Card number", "Security code"]));
+    expect(labels).toEqual(expect.arrayContaining(["First name", "Email", "Phone", "Address", "City", "State / region", "Postal code", "Country", "Payment method", "Card number", "Security code"]));
     const card = fields.find((field) => field.label === "Card number");
     expect(card?.value).toBe("4242424242424242");
     expect(buildFillFieldsScript(fields)).toContain("4242424242424242");
@@ -135,6 +135,13 @@ describe("CheckoutAutomation engine", () => {
     const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);
     expect(outcome.status).toBe("declined");
     expect(outcome.status === "declined" && outcome.message).toMatch(/Add to Cart/i);
+  });
+
+  it("selects Credit/Debit Card before filling card details", () => {
+    const fields = buildCheckoutFields(profile as never);
+    const paymentMethod = fields.find((field) => field.label === "Payment method");
+    expect(paymentMethod).toMatchObject({ value: "Credit/Debit Card" });
+    expect(fields.indexOf(paymentMethod!)).toBeLessThan(fields.findIndex((field) => field.label === "Card number"));
   });
 
   it("pauses only when the live page actually exposes a CAPTCHA", async () => {

@@ -48,6 +48,7 @@ export function buildCheckoutFields(profile: Profile, extra?: { address1Hint?: s
   }
   if (profile.payment?.number) {
     fields.push(
+      { label: "Payment method", value: "Credit/Debit Card", selectors: ["select[name*='payment' i]", "select[id*='payment' i]", "select[name*='method' i]", "select[id*='method' i]", "select"] },
       { label: "Cardholder name", value: profile.payment.cardholderName, selectors: ["[autocomplete='cc-name']", "[name*='name-on-card' i]", "[name*='card' i][name*='name' i]", "#credit_card_name"], sensitive: true },
       { label: "Card number", value: profile.payment.number, selectors: ["[autocomplete='cc-number']", "[name*='card' i][name*='number' i]", "#credit_card_number", "[name*='card' i][name*='num' i]"], sensitive: true },
       { label: "Card expiry month", value: profile.payment.expiryMonth, selectors: ["[autocomplete='cc-exp-month']", "[name*='exp' i][name*='month' i]", "#expiration_date_1i"], sensitive: true },
@@ -58,7 +59,7 @@ export function buildCheckoutFields(profile: Profile, extra?: { address1Hint?: s
   return fields.filter((field) => field.value.trim().length > 0);
 }
 
-const paymentLabels = new Set(["Cardholder name", "Card number", "Card expiry month", "Card expiry year", "Security code"]);
+const paymentLabels = new Set(["Payment method", "Cardholder name", "Card number", "Card expiry month", "Card expiry year", "Security code"]);
 
 /** Fields that belong on the shipping/contact step, excluding card inputs. */
 export function buildShippingFields(profile: Profile): CheckoutFieldScript[] {
