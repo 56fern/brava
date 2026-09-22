@@ -10,6 +10,7 @@ import {
   buildProductPageScript,
   buildSubmitOrderScript,
   parseOrderConfirmation,
+  splitPaymentFields,
 } from "../src/shared/checkout-scripts.js";
 import { CheckoutAutomation } from "../src/main/checkout-automation.js";
 
@@ -165,6 +166,40 @@ describe("CheckoutAutomation engine", () => {
     const paymentMethod = fields.find((field) => field.label === "Payment method");
     expect(paymentMethod).toMatchObject({ value: "Credit/Debit Card" });
     expect(fields.indexOf(paymentMethod!)).toBeLessThan(fields.findIndex((field) => field.label === "Card number"));
+    const payment = splitPaymentFields(fields);
+    expect(payment.method.map((field) => field.label)).toEqual(["Payment method"]);
+    expect(payment.details.map((field) => field.label)).toEqual(expect.arrayContaining(["Card number", "Card expiry month", "Card expiry year", "Security code"]));
+    const detailScript = buildFillFieldsScript(payment.details);
+    expect(detailScript).toContain("select[name*='month' i]");
+    expect(detailScript).toContain("select[name*='year' i]");
+    expect(detailScript).toContain("if (node.value !== option.value)");
+  });
+
+  it("waits for the card controls after selecting the payment method", async () => {
+    const calls: string[] = [];
+    let page: "payment" | "review" | "confirmation" = "payment";
+    let methodSelected = false;
+    const webContents = {
+      executeJavaScript: async (script: string) => {
+        if (script.includes("return { state: 'confirmation'")) return { state: page };
+        if (script.includes("challenges.cloudflare")) return { detected: false };
+        if (script.includes("document.body?.innerText")) return page === "confirmation" ? "Thank you for your order! Order Number: PC-777777" : "";
+        if (script.includes('"label":"Payment method"')) { calls.push("select method"); methodSelected = true; return { filled: ["Payment method"], missing: [] }; }
+        if (script.includes('"label":"Card number"')) {
+          calls.push("fill card details");
+          return methodSelected ? { filled: ["Card number", "Card expiry month", "Card expiry year", "Security code"], missing: [] } : { filled: [], missing: ["Card number"] };
+        }
+        if (script.includes("data-brava-last-clicked")) { calls.push("continue payment"); page = "review"; return { clicked: true }; }
+        if (script.includes("place your order")) { calls.push("place order"); page = "confirmation"; return { clicked: true }; }
+        return {};
+      },
+      getURL: () => `https://www.pokemoncenter.com/${page === "payment" ? "checkout/payment" : page === "review" ? "checkout/review" : "confirmation"}`,
+      getTitle: () => page === "confirmation" ? "Thank You" : "Checkout",
+    };
+
+    const outcome = await new CheckoutAutomation(noSleep).run({ ...task, checkoutStage: "payment" } as never, profile as never, webContents);
+    expect(outcome).toMatchObject({ status: "completed", orderNumber: "PC-777777" });
+    expect(calls).toEqual(["select method", "fill card details", "continue payment", "place order"]);
   });
 
   it("pauses only when the live page actually exposes a CAPTCHA", async () => {

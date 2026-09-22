@@ -51,9 +51,9 @@ export function buildCheckoutFields(profile: Profile, extra?: { address1Hint?: s
       { label: "Payment method", value: "Credit/Debit Card", selectors: ["select[name*='payment' i]", "select[id*='payment' i]", "select[name*='method' i]", "select[id*='method' i]", "select"] },
       { label: "Cardholder name", value: profile.payment.cardholderName, selectors: ["[autocomplete='cc-name']", "[name*='name-on-card' i]", "[name*='card' i][name*='name' i]", "#credit_card_name"], sensitive: true },
       { label: "Card number", value: profile.payment.number, selectors: ["[autocomplete='cc-number']", "[name*='card' i][name*='number' i]", "#credit_card_number", "[name*='card' i][name*='num' i]"], sensitive: true },
-      { label: "Card expiry month", value: profile.payment.expiryMonth, selectors: ["[autocomplete='cc-exp-month']", "[name*='exp' i][name*='month' i]", "#expiration_date_1i"], sensitive: true },
-      { label: "Card expiry year", value: profile.payment.expiryYear, selectors: ["[autocomplete='cc-exp-year']", "[name*='exp' i][name*='year' i]", "#expiration_date_2i"], sensitive: true },
-      { label: "Security code", value: profile.payment.cvv ?? "", selectors: ["[autocomplete='cc-csc']", "[name*='cvv' i]", "[name*='security' i][name*='code' i]", "#verification_value"], sensitive: true },
+      { label: "Card expiry month", value: profile.payment.expiryMonth, selectors: ["[autocomplete='cc-exp-month']", "[name*='exp' i][name*='month' i]", "[id*='exp' i][id*='month' i]", "select[name*='month' i]", "select[id*='month' i]", "#expiration_date_1i"], sensitive: true },
+      { label: "Card expiry year", value: profile.payment.expiryYear, selectors: ["[autocomplete='cc-exp-year']", "[name*='exp' i][name*='year' i]", "[id*='exp' i][id*='year' i]", "select[name*='year' i]", "select[id*='year' i]", "#expiration_date_2i"], sensitive: true },
+      { label: "Security code", value: profile.payment.cvv ?? "", selectors: ["[autocomplete='cc-csc']", "[name*='cvv' i]", "[id*='cvv' i]", "[name*='cvv2' i]", "[id*='cvv2' i]", "[name*='security' i][name*='code' i]", "#verification_value"], sensitive: true },
     );
   }
   return fields.filter((field) => field.value.trim().length > 0);
@@ -69,6 +69,14 @@ export function buildShippingFields(profile: Profile): CheckoutFieldScript[] {
 /** Fields that belong on the payment step, including a separate billing address when configured. */
 export function buildPaymentFields(profile: Profile): CheckoutFieldScript[] {
   return buildCheckoutFields(profile).filter((field) => field.label.startsWith("Billing ") || paymentLabels.has(field.label));
+}
+
+/** The payment selector must settle before Pokémon Center renders its card controls. */
+export function splitPaymentFields(fields: CheckoutFieldScript[]): { method: CheckoutFieldScript[]; details: CheckoutFieldScript[] } {
+  return {
+    method: fields.filter((field) => field.label === "Payment method"),
+    details: fields.filter((field) => field.label !== "Payment method"),
+  };
 }
 
 /** Escape a string for embedding as a JS string literal in an injected script. */
@@ -144,11 +152,23 @@ export function buildFillFieldsScript(fields: CheckoutFieldScript[]): string {
   const assign = (node, field) => {
     if (node instanceof HTMLSelectElement) {
       const wanted = field.value.trim().toLowerCase();
-      const option = [...node.options].find((entry) => entry.label.trim().toLowerCase() === wanted || entry.value.trim().toLowerCase() === wanted || entry.label.trim().toLowerCase().startsWith(wanted) || entry.value.trim().toLowerCase().startsWith(wanted));
+      const wantedDigits = wanted.replace(/\D/g, '');
+      const option = [...node.options].find((entry) => {
+        const label = entry.label.trim().toLowerCase();
+        const value = entry.value.trim().toLowerCase();
+        const optionDigits = (value || label).replace(/\D/g, '');
+        const exact = label === wanted || value === wanted || label.startsWith(wanted) || value.startsWith(wanted);
+        const sameNumber = wantedDigits && optionDigits && Number(optionDigits) === Number(wantedDigits);
+        const sameShortYear = wantedDigits.length === 4 && optionDigits.length === 2 && wantedDigits.endsWith(optionDigits);
+        return exact || sameNumber || sameShortYear;
+      });
       if (!option) return false;
-      setNativeValue(node, option.value);
+      // Re-firing the payment-method change event rebuilds Pokémon Center's
+      // card form. Leave an already-correct select alone so the newly rendered
+      // number/CVV/month/year controls stay mounted for the next polling pass.
+      if (node.value !== option.value) setNativeValue(node, option.value);
     } else {
-      setNativeValue(node, field.value);
+      if (node.value !== field.value) setNativeValue(node, field.value);
     }
     used.add(node);
     return true;

@@ -12,6 +12,7 @@ import {
   buildShippingFields,
   buildSubmitOrderScript,
   parseOrderConfirmation,
+  splitPaymentFields,
   type CheckoutPageState,
 } from "../shared/checkout-scripts.js";
 
@@ -186,14 +187,22 @@ export class CheckoutAutomation {
     if (stage === "payment") {
       const fields = buildPaymentFields(profile);
       if (!fields.some((field) => field.label === "Card number")) return { status: "declined", message: "The assigned profile has no complete payment card. Nothing was ordered." };
-      let missing = fields.map((field) => field.label);
+      const payment = splitPaymentFields(fields);
+      let methodReady = payment.method.length === 0;
+      let missing = payment.details.map((field) => field.label);
       for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
         this.assertRunning(signal);
         const captcha = await this.captcha(webContents, "payment", signal);
         if (captcha) return captcha;
         const detectedState = await this.pageState(webContents, signal);
         if (detectedState === "review" || detectedState === "confirmation") { stage = detectedState; break; }
-        const filled = await this.readFields(webContents, fields, signal);
+        if (!methodReady) {
+          const selected = await this.readFields(webContents, payment.method, signal);
+          methodReady = selected.missing.length === 0;
+          await this.wait(pollIntervalMs, signal);
+          continue;
+        }
+        const filled = await this.readFields(webContents, payment.details, signal);
         missing = filled.missing;
         await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
         await this.wait(pollIntervalMs, signal);
