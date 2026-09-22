@@ -1,13 +1,19 @@
 {
-  "version": "0.52.8",
-  "title": "Saved Payment Details Fix",
+  "version": "0.52.9",
+  "title": "Task Stop and Queue Mode Fix",
   "sections": [
     {
-      "name": "Checkout",
+      "name": "Task control",
       "items": [
-        "Full card numbers and security codes now remain attached to profiles after saving.",
-        "Saved card numbers are visible when editing a profile and are available to automatic checkout.",
-        "Profiles affected by the previous version need their card number and security code entered once."
+        "Stopping a task now immediately cancels its active checkout navigation, polling, and clicks."
+      ]
+    },
+    {
+      "name": "Queue mode",
+      "items": [
+        "Wait for queue now monitors Pokémon Center until a real waiting room goes live.",
+        "The task waits in the queue until access is granted, then reuses the same browser session to open the assigned SKU and begin checkout.",
+        "Product signals no longer bypass queue mode while the task is waiting."
       ]
     }
   ],
