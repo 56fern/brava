@@ -1,12 +1,20 @@
 {
-  "version": "0.52.1",
-  "title": "Checkout Reliability Update",
+  "version": "0.52.2",
+  "title": "Task Editing and Checkout Update",
   "sections": [
     {
       "name": "Checkout",
       "items": [
-        "Tasks now continue automatically after the CAPTCHA is completed.",
-        "Automatic checkout is always enabled, including for tasks created by older versions."
+        "Checkout now starts immediately and pauses only when a real CAPTCHA needs to be solved.",
+        "Checkout resumes automatically in the same harvester after the CAPTCHA is completed."
+      ]
+    },
+    {
+      "name": "Tasks",
+      "items": [
+        "Editing a profile or proxy no longer clears the task SKU.",
+        "Task editing now uses grouped profile and proxy selectors.",
+        "Product links display their SKU, and task rows show the proxy group and active proxy."
       ]
     }
   ],
