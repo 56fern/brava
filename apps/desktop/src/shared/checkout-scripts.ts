@@ -104,7 +104,10 @@ export function buildFillFieldsScript(fields: CheckoutFieldScript[]): string {
   }
   const query = (selector) => {
     for (const root of roots) {
-      try { const node = root.querySelector(selector); if (node) return node; } catch {}
+      try {
+        const node = [...root.querySelectorAll(selector)].find((candidate) => !used.has(candidate));
+        if (node) return node;
+      } catch {}
     }
     return null;
   };
@@ -113,32 +116,56 @@ export function buildFillFieldsScript(fields: CheckoutFieldScript[]): string {
     const explicit = id ? roots.map((root) => { try { return root.querySelector('label[for="' + CSS.escape(id) + '"]'); } catch { return null; } }).find(Boolean) : null;
     return [explicit?.textContent, node.closest('label')?.textContent, node.getAttribute('aria-label'), node.getAttribute('placeholder'), node.name, node.id].filter(Boolean).join(' ').toLowerCase();
   };
+  const used = new Set();
+  const normalize = (value) => (value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const labeledControl = (field) => {
+    const wanted = normalize(field.label.replace(' / region', '').replace(' line 2', ''));
+    const labels = roots.flatMap((root) => [...root.querySelectorAll('label')]);
+    for (const label of labels) {
+      const text = normalize(label.textContent);
+      if (!(text === wanted || text.startsWith(wanted + ' ') || text.endsWith(' ' + wanted))) continue;
+      const ownerRoot = label.getRootNode();
+      const forId = label.getAttribute('for');
+      let control = null;
+      if (forId) {
+        try { control = ownerRoot.querySelector('#' + CSS.escape(forId)); } catch {}
+      }
+      control ||= label.querySelector('input, select, textarea');
+      let container = label.parentElement;
+      for (let depth = 0; !control && container && depth < 4; depth += 1, container = container.parentElement) {
+        const candidates = [...container.querySelectorAll('input, select, textarea')].filter((candidate) => visible(candidate) && !used.has(candidate));
+        if (candidates.length === 1) control = candidates[0];
+      }
+      if (control && visible(control) && !used.has(control)) return control;
+    }
+    return null;
+  };
+  const assign = (node, field) => {
+    if (node instanceof HTMLSelectElement) {
+      const wanted = field.value.trim().toLowerCase();
+      const option = [...node.options].find((entry) => entry.label.trim().toLowerCase() === wanted || entry.value.trim().toLowerCase() === wanted || entry.label.trim().toLowerCase().startsWith(wanted) || entry.value.trim().toLowerCase().startsWith(wanted));
+      if (!option) return false;
+      setNativeValue(node, option.value);
+    } else {
+      setNativeValue(node, field.value);
+    }
+    used.add(node);
+    return true;
+  };
   const fillField = (field) => {
+    const byLabel = labeledControl(field);
+    if (byLabel && assign(byLabel, field)) return field.label;
     for (const selector of field.selectors) {
       const node = query(selector);
       if (!node) continue;
-      if (node instanceof HTMLSelectElement) {
-        const wanted = field.value.trim().toLowerCase();
-        const option = [...node.options].find((entry) => entry.label.trim().toLowerCase() === wanted || entry.value.trim().toLowerCase() === wanted || entry.label.trim().toLowerCase().startsWith(wanted) || entry.value.trim().toLowerCase().startsWith(wanted));
-        if (option) { setNativeValue(node, option.value); return field.label; }
-        continue;
-      }
       if (!visible(node)) continue;
-      setNativeValue(node, field.value);
-      return field.label;
+      if (assign(node, field)) return field.label;
     }
     const wanted = field.label.toLowerCase().replace(' / region', '').replace(' line 2', '');
     const tokens = wanted.split(/\s+/).filter((token) => token.length > 2 && token !== 'billing');
     const controls = roots.flatMap((root) => [...root.querySelectorAll('input, select, textarea')]);
-    const node = controls.find((control) => visible(control) && tokens.every((token) => labelText(control).includes(token)));
-    if (node instanceof HTMLSelectElement) {
-      const value = field.value.trim().toLowerCase();
-      const option = [...node.options].find((entry) => entry.label.trim().toLowerCase() === value || entry.value.trim().toLowerCase() === value || entry.label.trim().toLowerCase().startsWith(value));
-      if (!option) return null;
-      setNativeValue(node, option.value);
-      return field.label;
-    }
-    if (node) { setNativeValue(node, field.value); return field.label; }
+    const node = controls.find((control) => visible(control) && !used.has(control) && tokens.every((token) => labelText(control).includes(token)));
+    if (node && assign(node, field)) return field.label;
     return null;
   };
   const filled = [];

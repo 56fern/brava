@@ -39,6 +39,19 @@ describe("checkout scripts", () => {
     expect(buildFillFieldsScript(fields)).toContain("autocomplete='cc-number'");
   });
 
+  it("matches labeled name fields first and never reuses an input", () => {
+    const fields = buildCheckoutFields({
+      id: "p1", groupId: "g", name: "Jane Martinucci", email: "jane@example.com", firstName: "Jane", lastName: "Martinucci",
+      address1: "1 Main St", address2: "", city: "New York", region: "NY", postalCode: "10001", country: "US", phone: "555-0100",
+    });
+    const script = buildFillFieldsScript(fields);
+    expect(script).toContain("const labeledControl = (field)");
+    expect(script).toContain("const used = new Set()");
+    expect(script).toContain("!used.has(candidate)");
+    expect(script).toContain('"value":"Jane"');
+    expect(script).toContain('"value":"Martinucci"');
+  });
+
   it("omits payment fields when the profile has no card", () => {
     const fields = buildCheckoutFields({
       id: "p1", groupId: "g", name: "Jane Doe", email: "jane@example.com", firstName: "Jane", lastName: "Doe",
