@@ -193,12 +193,12 @@ export class AppStore {
   async recoverInterruptedTasks(): Promise<number> {
     return this.exclusive(async () => {
       const disk = await this.disk();
-      const interrupted = new Set(["queued", "monitoring", "found", "adding_to_cart", "submitting_order", "awaiting_user"]);
+      const interrupted = new Set(["queued", "monitoring", "found", "adding_to_cart", "carted", "submitting_order", "awaiting_user"]);
       const at = new Date().toISOString();
       let recovered = 0;
       for (const task of disk.tasks) {
         if (!interrupted.has(task.status)) continue;
-        const wasCheckout = ["adding_to_cart", "submitting_order", "awaiting_user"].includes(task.status);
+        const wasCheckout = ["adding_to_cart", "carted", "submitting_order", "awaiting_user"].includes(task.status);
         task.status = "stopped";
         task.statusMessage = wasCheckout
           ? "Checkout interrupted by Brava restart - verify the order before starting again"

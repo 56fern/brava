@@ -29,12 +29,12 @@ describe("startup task recovery", () => {
     const completed = task("completed", "completed");
     await writeFile(join(paths.userData, "brava-data.json"), JSON.stringify({
       deviceId: "device", profileGroups: [], proxyGroups: [], profiles: [], proxies: [], taskGroups: [],
-      tasks: [waiting, submitting, completed], harvesters: [],
+      tasks: [waiting, submitting, completed, { ...task("carted", "carted"), cartedAt: new Date().toISOString(), checkoutStage: "cart" }], harvesters: [],
     }), "utf8");
     const { AppStore } = await import("../src/main/store.js");
     const store = new AppStore();
 
-    expect(await store.recoverInterruptedTasks()).toBe(2);
+    expect(await store.recoverInterruptedTasks()).toBe(3);
     await store.flush();
     const data = JSON.parse(await readFile(join(paths.userData, "brava-data.json"), "utf8")) as { tasks: Task[] };
     expect(data.tasks.find((item) => item.id === "captcha")?.status).toBe("stopped");
@@ -46,5 +46,6 @@ describe("startup task recovery", () => {
     expect(data.tasks.find((item) => item.id === "submitting")?.checkoutStage).toBeUndefined();
     expect(data.tasks.find((item) => item.id === "submitting")?.statusMessage).toContain("verify the order");
     expect(data.tasks.find((item) => item.id === "completed")?.status).toBe("completed");
+    expect(data.tasks.find((item) => item.id === "carted")?.status).toBe("stopped");
   });
 });

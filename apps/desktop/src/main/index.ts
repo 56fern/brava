@@ -103,6 +103,7 @@ if (!hasSingleInstanceLock) {
     onClosed: (harvesterId, redistribute) => challenges.releaseHarvester(harvesterId, redistribute),
     onSolved: (harvesterId) => challenges.solve(harvesterId),
     onSubmittingOrder: (taskId) => runner.markSubmittingOrder(taskId),
+    onCarted: (taskId) => runner.markAutomaticCarted(taskId),
   });
   await challenges.recover();
   const updater = new UpdateController(() => mainWindow);

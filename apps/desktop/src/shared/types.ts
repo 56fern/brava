@@ -126,6 +126,7 @@ export type Task = {
   effectiveQuantity?: number;
   maxCartQuantity?: number;
   checkoutAmount?: number;
+  cartedAt?: string;
   orderNumber?: string;
   profileId: string;
   proxyId: string;

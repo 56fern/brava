@@ -6,6 +6,7 @@ import { validateAppData } from "../../shared/backup";
 import { ProfileCsvError, parseProfilesCsv } from "../../shared/profile-csv";
 import { createTaskBatch } from "../../shared/task-builder";
 import { taskModeLabel } from "../../shared/task-mode";
+import { isCartedTask } from "../../shared/task-progress";
 import { buildTaskEditPatch, taskEditFormFor, type TaskEditField, type TaskEditForm, type TaskEditPatch } from "../../shared/task-edit";
 import { getVirtualRange } from "../../shared/virtual-window";
 import { harvesterProxyLabel, parseHarvesterProxy } from "../../shared/harvester-proxy";
@@ -240,8 +241,8 @@ function Tasks({ data, save }: { data: AppData; save: (data: AppData) => Promise
   const addGroup = (group: TaskGroup) => { void save({ ...data, taskGroups: [...data.taskGroups, group] }); setSelectedGroupId(group.id); setFilter("all"); setCreatingGroup(false); };
   const startAll = () => void window.brava.tasks.startMany(groupTasks.map((task) => task.id));
   const stopAll = () => void window.brava.tasks.stopMany(groupTasks.map((task) => task.id));
-  const counts = { carted: groupTasks.filter((task) => task.status === "carted").length, completed: groupTasks.filter((task) => task.status === "completed").length, declined: groupTasks.filter((task) => task.status === "declined").length };
-  const visible = filter === "all" ? groupTasks : groupTasks.filter((task) => task.status === filter);
+  const counts = { carted: groupTasks.filter(isCartedTask).length, completed: groupTasks.filter((task) => task.status === "completed").length, declined: groupTasks.filter((task) => task.status === "declined").length };
+  const visible = filter === "all" ? groupTasks : filter === "carted" ? groupTasks.filter(isCartedTask) : groupTasks.filter((task) => task.status === filter);
   const contextTask = contextMenu ? data.tasks.find((task) => task.id === contextMenu.taskId) : undefined;
   const selectedTasks = data.tasks.filter((task) => selectedTaskIds.includes(task.id));
   const logTask = logTaskId ? data.tasks.find((task) => task.id === logTaskId) : undefined;
@@ -487,7 +488,7 @@ function TaskTableRowContent({ task, profileGroups, proxyGroups, profiles, proxi
       {idle ? <button title="Start" onClick={() => void window.brava.tasks.start(task.id)}><Play size={14} /></button> : <button title="Stop" onClick={() => void window.brava.tasks.stop(task.id)}><Square size={13} /></button>}
       {["awaiting_user", "carted"].includes(task.status) && <button className="review" title="Open in harvester" onClick={() => void window.brava.tasks.review(task.id)}><ExternalLink size={14} /></button>}
       {task.status === "awaiting_user" && <button title="Mark carted" onClick={() => void window.brava.tasks.markCarted(task.id)}><ShoppingCart size={14} /></button>}
-      {task.status === "carted" && <button title="Confirm successful checkout" onClick={() => void window.brava.tasks.complete(task.id)}><Check size={14} /></button>}
+      {task.status === "carted" && !task.checkoutStage && <button title="Confirm successful checkout" onClick={() => void window.brava.tasks.complete(task.id)}><Check size={14} /></button>}
       {["awaiting_user", "carted"].includes(task.status) && <button title="Mark declined" onClick={() => void window.brava.tasks.decline(task.id)}><X size={14} /></button>}
       {task.status === "declined" && task.offerProfileFallback && profiles.length > 1 && <button title="Select next profile manually" onClick={onNextProfile}><RotateCcw size={14} /></button>}
       <button title="Delete" onClick={onDelete}><Trash2 size={14} /></button>

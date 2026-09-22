@@ -93,6 +93,10 @@ describe("TaskRunner checkout automation", () => {
     const send = vi.fn();
     const runner = new TaskRunner(store, () => ({ webContents: { send } }) as never);
     runner.setCheckoutHandlers({ run: async () => {
+      await runner.markAutomaticCarted("test-task");
+      await runner.markAutomaticCarted("test-task");
+      expect(disk().tasks[0]).toMatchObject({ status: "carted", cartedAt: expect.any(String) });
+      expect(disk().tasks[0]?.history.filter((event) => event.status === "carted")).toHaveLength(1);
       await runner.markSubmittingOrder("test-task");
       expect(disk().tasks[0]?.status).toBe("submitting_order");
       return { status: "completed", message: "Order confirmed", orderNumber: "ORDER-2" };
@@ -101,7 +105,8 @@ describe("TaskRunner checkout automation", () => {
     await runner.beginAutoCheckout("test-task", "harvester-1");
 
     expect(disk().tasks[0]).toMatchObject({ status: "completed", orderNumber: "ORDER-2" });
-    expect(disk().tasks[0]?.history?.map((event) => event.status)).toEqual(["submitting_order", "completed"]);
+    expect(disk().tasks[0]?.history?.map((event) => event.status)).toEqual(["carted", "submitting_order", "completed"]);
+    expect(send).toHaveBeenCalledWith("task:update-batch", [expect.objectContaining({ status: "carted" })]);
     expect(send).toHaveBeenCalledWith("task:update-batch", [expect.objectContaining({ status: "submitting_order" })]);
   });
 
@@ -145,7 +150,10 @@ describe("TaskRunner checkout automation", () => {
     const request = vi.fn(async () => undefined);
     runner.setChallengeHandlers({ request, cancel: vi.fn(async () => undefined) });
     const checkout = vi.fn()
-      .mockResolvedValueOnce({ status: "captcha" as const, challengeUrl, harvesterId: "harvester-1", resumeStage: "checkout" as const, message: "CAPTCHA detected" })
+      .mockImplementationOnce(async () => {
+        await runner.markAutomaticCarted("test-task");
+        return { status: "captcha" as const, challengeUrl, harvesterId: "harvester-1", resumeStage: "checkout" as const, message: "CAPTCHA detected" };
+      })
       .mockResolvedValueOnce({ status: "completed" as const, message: "Checkout resumed" });
     runner.setCheckoutHandlers({ run: checkout });
 
@@ -158,6 +166,7 @@ describe("TaskRunner checkout automation", () => {
     await runner.beginAutoCheckout("test-task", "harvester-1");
 
     expect(checkout).toHaveBeenCalledTimes(2);
+    expect(checkout.mock.calls[1]?.[0]).toMatchObject({ status: "carted", cartedAt: expect.any(String) });
     expect(disk().tasks[0]?.status).toBe("completed");
     expect(disk().tasks[0]?.checkoutStage).toBeUndefined();
   });
@@ -175,11 +184,15 @@ describe("TaskRunner checkout automation", () => {
 
     const running = runner.beginAutoCheckout("test-task", "harvester-1");
     await vi.waitFor(() => expect(checkout).toHaveBeenCalledTimes(1));
+    await runner.markAutomaticCarted("test-task");
     await runner.stop("test-task");
     await running;
 
     expect(observedSignal?.aborted).toBe(true);
     expect(disk().tasks[0]).toMatchObject({ status: "stopped", statusMessage: "Stopped by user" });
+    await runner.start("test-task");
+    expect(disk().tasks[0]?.cartedAt).toBeUndefined();
+    await runner.shutdown();
   });
 
   it("waits for a live queue, passes it, and checks out in the same harvester", async () => {

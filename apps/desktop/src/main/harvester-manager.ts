@@ -113,6 +113,7 @@ export class HarvesterManager {
   private onClosed: ((id: string, redistribute: boolean) => void | Promise<void>) | undefined;
   private onSolved: ((id: string) => void | Promise<void>) | undefined;
   private onSubmittingOrder: ((taskId: string) => Promise<void>) | undefined;
+  private onCarted: ((taskId: string) => Promise<void>) | undefined;
 
   constructor(
     private readonly store: AppStore,
@@ -125,11 +126,13 @@ export class HarvesterManager {
     onClosed?: (id: string, redistribute: boolean) => void | Promise<void>;
     onSolved?: (id: string) => void | Promise<void>;
     onSubmittingOrder?: (taskId: string) => Promise<void>;
+    onCarted?: (taskId: string) => Promise<void>;
   }): void {
     this.onAvailable = handlers.onAvailable;
     this.onClosed = handlers.onClosed;
     this.onSolved = handlers.onSolved;
     this.onSubmittingOrder = handlers.onSubmittingOrder;
+    this.onCarted = handlers.onCarted;
   }
 
   private async update(id: string, status: HarvesterStatus, statusMessage: string, patch: Partial<Harvester> = {}): Promise<void> {
@@ -537,7 +540,7 @@ export class HarvesterManager {
         if (signal?.aborted) throw new DOMException("Checkout stopped by user", "AbortError");
         await browser.webContents.executeJavaScript("document.readyState === 'complete' || new Promise((resolve) => addEventListener('load', resolve, { once: true }))", true).catch(() => undefined);
       }
-      outcome = await this.checkout.run(task, profile, browser.webContents, signal, () => this.onSubmittingOrder?.(task.id) ?? Promise.resolve());
+      outcome = await this.checkout.run(task, profile, browser.webContents, signal, () => this.onSubmittingOrder?.(task.id) ?? Promise.resolve(), () => this.onCarted?.(task.id) ?? Promise.resolve());
     } catch (error) {
       outcome = signal?.aborted || (error instanceof DOMException && error.name === "AbortError")
         ? { status: "cancelled", message: "Checkout stopped by user" }

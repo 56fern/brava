@@ -42,8 +42,8 @@ export type CheckoutOutcome =
   | { status: "declined"; message: string };
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-const pollAttempts = 40;
-const pollIntervalMs = 300;
+const pollAttempts = 120;
+const pollIntervalMs = 100;
 const requiredPaymentLabels = ["Card number", "Card expiry month", "Card expiry year", "Security code"];
 type ClickResult = { clicked?: boolean; candidates?: unknown } | null;
 
@@ -148,14 +148,22 @@ export class CheckoutAutomation {
   }
 
   /** Runs the full automatic checkout in the caller-supplied webContents. */
-  async run(task: Task, profile: Parameters<typeof buildShippingFields>[0], webContents: CheckoutWebContents, signal?: AbortSignal, onSubmittingOrder?: () => Promise<void>): Promise<CheckoutOutcome> {
+  async run(task: Task, profile: Parameters<typeof buildShippingFields>[0], webContents: CheckoutWebContents, signal?: AbortSignal, onSubmittingOrder?: () => Promise<void>, onCarted?: () => Promise<void>): Promise<CheckoutOutcome> {
     this.assertRunning(signal);
+    let cartReported = Boolean(task.cartedAt);
+    const reportCarted = async () => {
+      this.assertRunning(signal);
+      if (cartReported) return;
+      cartReported = true;
+      await onCarted?.();
+    };
     const alreadyConfirmed = parseOrderConfirmation({ url: webContents.getURL(), title: webContents.getTitle(), bodyText: "" });
     if (alreadyConfirmed.confirmed) {
       const existingConfirmation = await this.confirmation(webContents, signal);
       if (existingConfirmation) return existingConfirmation;
     }
     let stage: CheckoutStage = task.checkoutStage === "checkout" ? "cart" : task.checkoutStage === "submit" ? "review" : task.checkoutStage ?? "product";
+    if (["shipping", "payment", "review", "confirmation"].includes(stage)) await reportCarted();
 
     if (stage === "product") {
       const initialCaptcha = await this.captcha(webContents, "product", signal);
@@ -179,21 +187,23 @@ export class CheckoutAutomation {
       // Wait for a cart badge or success notice, with a bounded fallback for
       // storefronts that do not expose either signal.
       let cartAcknowledged = false;
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        await this.wait(pollIntervalMs, signal);
+      for (let attempt = 0; attempt < 90; attempt += 1) {
         const captcha = await this.captcha(webContents, "cart", signal);
         if (captcha) return captcha;
         const current = await this.pageState(webContents, signal);
         if (current === "cart" || current === "guest" || current === "shipping" || current === "payment" || current === "review" || current === "confirmation") {
           stage = current;
           cartAcknowledged = true;
+          if (current !== "cart" && current !== "guest") await reportCarted();
           break;
         }
         const evidence = await webContents.executeJavaScript(buildCartEvidenceScript(), true) as { count?: number | null; added?: boolean } | null;
         if (evidence?.added || (typeof evidence?.count === "number" && evidence.count > (before?.count ?? 0))) {
           cartAcknowledged = true;
+          await reportCarted();
           break;
         }
+        await this.wait(pollIntervalMs, signal);
       }
       if (!cartAcknowledged) {
         const siteErrors = await this.siteErrors(webContents, signal);
@@ -202,7 +212,6 @@ export class CheckoutAutomation {
     }
 
     if (stage === "cart" || stage === "guest") {
-      await this.wait(pollIntervalMs * 2, signal);
       let checkoutControlClicked = false;
       let emptyCartChecks = 0;
       for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
@@ -213,26 +222,30 @@ export class CheckoutAutomation {
         if (captcha) return captcha;
         if (detectedState === "shipping" || detectedState === "payment" || detectedState === "review" || detectedState === "confirmation") {
           stage = detectedState;
+          await reportCarted();
           break;
         }
         if (detectedState === "guest") {
           stage = "guest";
           const guest = await webContents.executeJavaScript(buildGuestCheckoutScript(), true) as ClickResult;
           checkoutControlClicked ||= Boolean(guest?.clicked);
+          if (guest?.clicked) await reportCarted();
         } else if (detectedState === "cart") {
           stage = "cart";
           const cart = await webContents.executeJavaScript(buildCartDiagnosticsScript(), true) as { empty?: boolean } | null;
           emptyCartChecks = cart?.empty ? emptyCartChecks + 1 : 0;
-          if (emptyCartChecks >= 10) {
+          if (emptyCartChecks >= 30) {
             const siteErrors = await this.siteErrors(webContents, signal);
             return { status: "declined", message: `Brava clicked Add to Cart, but Pokémon Center reports an empty cart at ${webContents.getURL()}.${siteErrors.length ? ` Site error: ${siteErrors.join(" | ")}.` : ""} The item was not confirmed in the cart; checkout was not attempted.` };
           }
           if (cart?.empty) { await this.wait(pollIntervalMs, signal); continue; }
           const proceed = await webContents.executeJavaScript(buildProceedToCheckoutScript(), true) as ClickResult;
           checkoutControlClicked ||= Boolean(proceed?.clicked);
+          if (proceed?.clicked) await reportCarted();
         } else {
           const guest = await webContents.executeJavaScript(buildGuestCheckoutScript(), true) as ClickResult;
           checkoutControlClicked ||= Boolean(guest?.clicked);
+          if (guest?.clicked) await reportCarted();
           if (!guest?.clicked) {
             const cart = await webContents.executeJavaScript(buildOpenCartScript(attempt >= 2), true) as ClickResult;
             if (!cart?.clicked) {

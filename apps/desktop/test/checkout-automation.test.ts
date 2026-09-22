@@ -148,6 +148,32 @@ describe("checkout scripts", () => {
     expect(result).toEqual({ empty: false, controls: ["check out"] });
   });
 
+  it("opens the cart without clicking Add to Cart a second time", () => {
+    const clicked: string[] = [];
+    const element = (label: string, href = "") => ({
+      textContent: label, offsetParent: {}, disabled: false,
+      hasAttribute: () => false, setAttribute: () => undefined,
+      getAttribute: (name: string) => name === "href" ? href : null,
+      click: () => clicked.push(label),
+    });
+    const result = new Function("document", "location", `return ${buildOpenCartScript()}`)(
+      { querySelectorAll: () => [element("Add to Cart"), element("View Cart", "/cart")] },
+      { origin: "https://www.pokemoncenter.com" },
+    );
+    expect(result.clicked).toBe(true);
+    expect(clicked).toEqual(["View Cart"]);
+  });
+
+  it("does not report a disabled Place Order control as submitted", () => {
+    const click = vi.fn();
+    const button = { textContent: "Place Order", offsetParent: {}, disabled: false, click,
+      getAttribute: (name: string) => name === "aria-disabled" ? "true" : null,
+      hasAttribute: () => false, setAttribute: () => undefined };
+    const result = new Function("document", `return ${buildSubmitOrderScript()}`)({ querySelectorAll: () => [button] });
+    expect(result.clicked).toBe(false);
+    expect(click).not.toHaveBeenCalled();
+  });
+
   it("reads a cart badge without confusing the Add to Cart button for confirmation", () => {
     const cartLink = {
       offsetParent: {}, textContent: "Cart 1", getAttribute: (name: string) => name === "aria-label" ? "Cart 1" : null,
@@ -176,14 +202,17 @@ describe("CheckoutAutomation engine", () => {
 
   it("completes checkout and reports the order number", async () => {
     const calls: string[] = [];
+    let added = false;
+    let sleptMs = 0;
     let page: "product" | "cart" | "guest" | "shipping" | "payment" | "review" | "confirmation" = "product";
     const webContents = {
       executeJavaScript: async (script: string) => {
         if (script.includes("return { state: 'confirmation'")) return { state: page };
         if (script.includes("challenges.cloudflare")) return { detected: false };
+        if (script.includes("const cartLinks =")) return { count: added ? 1 : 0, added: false };
         if (script.includes("document.body?.innerText")) return page === "confirmation" ? "Thank you for your order! Order Number: PC-998877 Order Total $54.99" : "";
         if (script.includes("place your order")) { calls.push("place order"); page = "confirmation"; return { clicked: true }; }
-        if (script.includes("data-brava-clicked")) { calls.push("add to cart"); return { clicked: true }; }
+        if (script.includes("data-brava-clicked")) { added = true; calls.push("add to cart"); return { clicked: true }; }
         if (script.includes("data-brava-opened-cart")) { calls.push("open cart"); page = "cart"; return { clicked: true }; }
         if (script.includes("data-brava-guest-clicked")) {
           if (page !== "guest") return { clicked: false };
@@ -206,11 +235,16 @@ describe("CheckoutAutomation engine", () => {
       getURL: () => `https://www.pokemoncenter.com/${page === "product" ? "product/x" : page === "cart" ? "cart" : page === "guest" ? "checkout" : page === "shipping" ? "checkout/address" : page === "payment" ? "checkout/payment" : page === "review" ? "checkout/review" : "confirmation"}`,
       getTitle: () => page === "confirmation" ? "Thank You" : "Pokémon Center",
     };
-    const automation = new CheckoutAutomation(noSleep);
-    const outcome = await automation.run(task as never, profile as never, webContents);
+    const automation = new CheckoutAutomation(async (ms) => { sleptMs += ms; });
+    const outcome = await automation.run(task as never, profile as never, webContents, undefined, undefined, async () => {
+      expect(sleptMs).toBe(0);
+      calls.push("carted status");
+    });
     expect(outcome.status).toBe("completed");
     expect(calls).toEqual(expect.arrayContaining(["add to cart", "open cart", "checkout", "guest checkout", "fill shipping", "continue shipping", "fill payment", "continue payment", "place order"]));
     expect(calls.indexOf("open cart")).toBeLessThan(calls.indexOf("guest checkout"));
+    expect(calls.indexOf("carted status")).toBeLessThan(calls.indexOf("open cart"));
+    expect(calls.filter((call) => call === "carted status")).toHaveLength(1);
     expect(calls.indexOf("fill shipping")).toBeLessThan(calls.indexOf("fill payment"));
   });
 
@@ -252,6 +286,7 @@ describe("CheckoutAutomation engine", () => {
     let clickedAdd = false;
     let evidenceReads = 0;
     let evidenceReadsAtCartOpen = -1;
+    let cartReports = 0;
     const webContents = {
       executeJavaScript: async (script: string) => {
         if (script.includes("challenges.cloudflare")) return { detected: false };
@@ -262,6 +297,7 @@ describe("CheckoutAutomation engine", () => {
         }
         if (script.includes("data-brava-clicked")) { clickedAdd = true; return { clicked: true }; }
         if (script.includes("data-brava-opened-cart")) {
+          expect(cartReports).toBe(1);
           evidenceReadsAtCartOpen = evidenceReads;
           page = "cart";
           return { clicked: true };
@@ -272,9 +308,10 @@ describe("CheckoutAutomation engine", () => {
       getURL: () => `https://www.pokemoncenter.com/${page === "cart" ? "cart" : "product/x"}`,
       getTitle: () => page,
     };
-    const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents);
+    const outcome = await new CheckoutAutomation(noSleep).run(task as never, profile as never, webContents, undefined, undefined, async () => { cartReports += 1; });
     expect(outcome.status).toBe("declined");
     expect(evidenceReadsAtCartOpen).toBeGreaterThanOrEqual(5);
+    expect(cartReports).toBe(1);
   });
 
   it("reports an add-to-cart site error without navigating away from the product", async () => {

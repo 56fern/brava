@@ -173,6 +173,7 @@ export class TaskRunner {
       queueNextCheckAt: undefined,
       queueCheckIntervalMinutes: queueCheckInterval(current),
       proxyFailureCount: 0,
+      cartedAt: undefined,
     });
     if (!task) throw new Error("Task not found");
     if (task.waitForQueue) this.scheduleQueueGate(id);
@@ -447,9 +448,9 @@ export class TaskRunner {
     let task = await this.getTask(id);
     if (!task) return;
     if (task.status === "awaiting_user" && task.challengeStatus === "solved") {
-      task = await this.update(id, "adding_to_cart", "CAPTCHA solved · automatic checkout resuming", { assignedHarvesterId: harvesterId }) ?? task;
+      task = await this.update(id, task.cartedAt ? "carted" : "adding_to_cart", "CAPTCHA solved · automatic checkout resuming", { assignedHarvesterId: harvesterId }) ?? task;
     }
-    if (task.status !== "adding_to_cart") return;
+    if (!["adding_to_cart", "carted"].includes(task.status)) return;
     const controller = this.beginOperation(id);
     let outcome: CheckoutOutcome;
     try {
@@ -466,7 +467,7 @@ export class TaskRunner {
       this.finishOperation(id, controller);
     }
     const stillRunning = await this.getTask(id);
-    if (stillRunning && !["adding_to_cart", "submitting_order"].includes(stillRunning.status)) return;
+    if (stillRunning && !["adding_to_cart", "carted", "submitting_order"].includes(stillRunning.status)) return;
     if (outcome.status === "cancelled") return;
     if (outcome.status === "captcha") {
       this.clear(id);
@@ -478,13 +479,23 @@ export class TaskRunner {
   /** The final order control was clicked; the merchant response is still pending. */
   async markSubmittingOrder(id: string): Promise<void> {
     const task = await this.getTask(id);
-    if (task?.status !== "adding_to_cart") return;
+    if (!task || !["adding_to_cart", "carted"].includes(task.status)) return;
     const submitting = await this.update(id, "submitting_order", "Place Order clicked · waiting for Pokémon Center confirmation", { checkoutStage: "confirmation" });
     // Do not let the normal 32 ms update coalescing swallow this short-lived
     // status when the merchant confirms an order immediately.
     if (submitting) {
       this.pendingUpdates.delete(id);
       this.window()?.webContents.send("task:update-batch", [submitting]);
+    }
+  }
+
+  async markAutomaticCarted(id: string): Promise<void> {
+    const task = await this.getTask(id);
+    if (!task || task.status !== "adding_to_cart" || task.cartedAt) return;
+    const carted = await this.update(id, "carted", "Cart confirmed · continuing checkout", { cartedAt: new Date().toISOString(), checkoutStage: "cart" });
+    if (carted) {
+      this.pendingUpdates.delete(id);
+      this.window()?.webContents.send("task:update-batch", [carted]);
     }
   }
 
@@ -551,7 +562,7 @@ export class TaskRunner {
 
   private async expireCartAttempt(id: string): Promise<void> {
     const task = await this.getTask(id);
-    if (!task || !["adding_to_cart", "submitting_order"].includes(task.status)) return;
+    if (!task || !["adding_to_cart", "carted", "submitting_order"].includes(task.status)) return;
     await this.update(id, "error", task.status === "submitting_order"
       ? "Order confirmation timed out - verify the order before retrying"
       : "Cart attempt timed out - no cart result was received; restart the task to retry");

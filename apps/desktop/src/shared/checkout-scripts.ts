@@ -210,7 +210,7 @@ export function buildFillFieldsScript(fields: CheckoutFieldScript[]): string {
 export function buildCheckoutPageStateScript(): string {
   return `(() => {
   const url = location.href.toLowerCase();
-  const visible = (element) => element && element.offsetParent !== null && !element.disabled;
+  const visible = (element) => element && element.offsetParent !== null && !element.disabled && element.getAttribute('aria-disabled') !== 'true';
   const controls = [...document.querySelectorAll('button, a, input, select, textarea')].filter(visible);
   const text = (element) => (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || element.value || '').trim().toLowerCase();
   const hasText = (patterns) => controls.some((element) => patterns.some((pattern) => text(element).includes(pattern)));
@@ -291,7 +291,7 @@ export function buildCartEvidenceScript(): string {
     const match = text.match(/^(\\d{1,3})$/) || text.match(/(?:cart|bag)[^\\d]{0,16}(\\d{1,3})(?:\\D|$)/i);
     return match ? Number(match[1]) : null;
   };
-  const cartLinks = [...document.querySelectorAll('a[href*="/cart" i], a[href*="/bag" i], [aria-label*="cart" i]')]
+  const cartLinks = [...document.querySelectorAll('a[href*="/cart" i], a[href*="/bag" i], [aria-label*="cart" i], [data-testid*="cart" i], [class*="cart-count" i], [class*="cartCount"]')]
     .filter((element) => visible(element) && !/add to (?:cart|bag)/i.test(element.getAttribute('aria-label') || element.textContent || ''));
   let count = null;
   for (const link of cartLinks) {
@@ -301,7 +301,7 @@ export function buildCartEvidenceScript(): string {
       if (found !== null) count = Math.max(count ?? 0, found);
     }
   }
-  const notices = [...document.querySelectorAll('[role="status"], [role="alert"], [aria-live], [class*="toast" i], [class*="notification" i]')]
+  const notices = [...document.querySelectorAll('[role="status"], [role="alert"], [role="dialog"], [aria-live], [class*="toast" i], [class*="notification" i], [class*="modal" i]')]
     .filter(visible).map((element) => (element.innerText || element.textContent || '').trim().toLowerCase());
   const added = notices.some((text) => /(?:item|product|successfully|has been|was)?\\s*added to (?:your )?(?:cart|bag)/i.test(text));
   return { count, added };
@@ -311,12 +311,13 @@ export function buildCartEvidenceScript(): string {
 /** Opens the cart after Add to Cart, using the visible cart control or the official cart path. */
 export function buildOpenCartScript(allowDirectNavigation = false): string {
   return `(() => {
-  const visible = (element) => element && element.offsetParent !== null && !element.disabled;
+  const visible = (element) => element && !element.disabled && (element.offsetParent != null || (element.getClientRects?.().length || 0) > 0);
   const candidates = [...document.querySelectorAll('a[href*="/cart" i], a[href*="/bag" i], button, [role="button"], [data-testid*="cart" i]')];
   const match = candidates.find((element) => {
     if (!visible(element) || element.hasAttribute('data-brava-opened-cart')) return false;
-    const text = (element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || '').trim().toLowerCase();
+    const text = [element.textContent, element.getAttribute('aria-label'), element.getAttribute('title')].filter(Boolean).join(' ').replace(/\\s+/g, ' ').trim().toLowerCase();
     const href = (element.getAttribute('href') || '').toLowerCase();
+    if (/add to (?:cart|bag|basket)/.test(text)) return false;
     return href.includes('/cart') || href.includes('/bag') || ['view cart', 'go to cart', 'shopping cart', 'my cart', 'cart'].some((pattern) => text === pattern || text.includes(pattern));
   });
   if (match) {
@@ -400,7 +401,7 @@ export function buildSubmitOrderScript(): string {
   const patterns = ["place your order", "place order", "pay now", "complete order", "complete purchase", "submit order", "confirm order", "place the order"];
   return `(() => {
   const patterns = ${JSON.stringify(patterns)};
-  const visible = (element) => element && element.offsetParent !== null && !element.disabled;
+  const visible = (element) => element && element.offsetParent !== null && !element.disabled && element.getAttribute('aria-disabled') !== 'true';
   const candidates = [...document.querySelectorAll('button, [role="button"], input[type="submit"], button[type="submit"]')];
   const match = candidates.find((element) => {
     if (!visible(element) || element.hasAttribute('data-brava-clicked')) return false;
