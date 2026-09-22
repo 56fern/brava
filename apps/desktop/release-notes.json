@@ -1,19 +1,13 @@
 {
-  "version": "0.52.7",
-  "title": "Payment and Profile Editing Improvements",
+  "version": "0.52.8",
+  "title": "Saved Payment Details Fix",
   "sections": [
     {
       "name": "Checkout",
       "items": [
-        "Brava now selects Credit/Debit Card before filling payment details.",
-        "Card number, security code, expiration month, and expiration year are filled after the payment form appears."
-      ]
-    },
-    {
-      "name": "Editing",
-      "items": [
-        "The task editor now provides more space for grouped profile and proxy selection.",
-        "Profiles can now be opened and edited individually with Shipping, Billing, and Card tabs."
+        "Full card numbers and security codes now remain attached to profiles after saving.",
+        "Saved card numbers are visible when editing a profile and are available to automatic checkout.",
+        "Profiles affected by the previous version need their card number and security code entered once."
       ]
     }
   ],
