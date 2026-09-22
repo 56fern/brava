@@ -25,7 +25,16 @@ function profile(value: unknown): Profile {
     const card = object(paymentValue);
     const brand = text(card, "brand");
     if (!["Visa", "Mastercard", "Amex", "Discover", "Other"].includes(brand)) throw new Error("Backup contains an unsupported card brand.");
-    payment = { cardholderName: text(card, "cardholderName"), brand: brand as NonNullable<Profile["payment"]>["brand"], last4: text(card, "last4"), expiryMonth: text(card, "expiryMonth"), expiryYear: text(card, "expiryYear"), billingSameAsShipping: Boolean(card.billingSameAsShipping) };
+    payment = {
+      cardholderName: text(card, "cardholderName"),
+      brand: brand as NonNullable<Profile["payment"]>["brand"],
+      number: text(card, "number", true) || undefined,
+      last4: text(card, "last4"),
+      expiryMonth: text(card, "expiryMonth"),
+      expiryYear: text(card, "expiryYear"),
+      cvv: text(card, "cvv", true) || undefined,
+      billingSameAsShipping: Boolean(card.billingSameAsShipping),
+    };
   }
   const billingValue = item.billing;
   let billing: Profile["billing"];

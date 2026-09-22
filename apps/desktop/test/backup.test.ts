@@ -18,6 +18,20 @@ describe("Brava backup validation", () => {
     expect(data.proxies[0]?.groupId).toBe(data.proxyGroups[0]?.id);
   });
 
+  it("preserves complete encrypted payment details during validation", () => {
+    const data = validateAppData({
+      profileGroups: [{ id: "g1", name: "Personal" }],
+      profiles: [{
+        id: "p1", groupId: "g1", name: "Home", email: "a@example.com", firstName: "A", lastName: "B",
+        address1: "1 Main", address2: "", city: "Boston", region: "MA", postalCode: "02101", country: "US", phone: "555",
+        payment: { cardholderName: "A B", brand: "Visa", number: "4242424242424242", last4: "4242", expiryMonth: "08", expiryYear: "2029", cvv: "123", billingSameAsShipping: true },
+      }],
+      proxyGroups: [], proxies: [], taskGroups: [], tasks: [], harvesters: [],
+    });
+
+    expect(data.profiles[0]?.payment).toMatchObject({ number: "4242424242424242", cvv: "123", last4: "4242" });
+  });
+
   it("rejects unrelated or malformed JSON data", () => {
     expect(() => validateAppData({ hello: "world" })).toThrow(/not a Brava/i);
     expect(() => validateAppData({ profiles: [], proxies: [{ port: "bad" }], tasks: [], harvesters: [] })).toThrow();
