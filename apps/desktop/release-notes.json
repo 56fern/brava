@@ -1,13 +1,13 @@
 {
-  "version": "0.52.11",
-  "title": "Framed Payment Form Fix",
+  "version": "0.52.12",
+  "title": "Hosted Payment Frame Fix",
   "sections": [
     {
       "name": "Automatic checkout",
       "items": [
-        "Fixed the Illegal invocation error that occurred after selecting Credit/Debit Card.",
-        "Card number, CVV, expiration month, and expiration year now use the Pokémon Center payment frame's own browser context.",
-        "Automatic checkout continues to review after the framed card controls are filled."
+        "Card selectors can no longer mistake a hosted payment iframe for a writable input.",
+        "Brava now discovers and fills card controls across every Electron checkout frame, including cross-origin provider frames.",
+        "Frame failures are isolated so one detached frame cannot stop checkout, and task logs include frame diagnostics if fields remain unavailable."
       ]
     }
   ],
