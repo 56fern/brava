@@ -20,7 +20,7 @@ describe("public checkout client", () => {
     const task: Task = {
       id: "task-public-client",
       name: "Pokemon TCG Box",
-      productUrl: "https://www.pokemoncenter.com/product/example",
+      productUrl: "https://www.pokemoncenter.com/-",
       sku: "10-12345-100",
       variant: "N/A",
       quantity: 1,
@@ -39,6 +39,7 @@ describe("public checkout client", () => {
     const body = JSON.parse(String(request?.[1]?.body));
     expect(request?.[1]?.headers.authorization).toBe("Bearer signed.session.token");
     expect(body).toMatchObject({ eventId: "task-public-client", site: "pokemon_center_us", quantity: 1, price: 49.99 });
+    expect(body.productUrl).toContain("/product/10-12345-100/pokemon-tcg-box");
     expect(JSON.stringify(body)).not.toContain("PRIVATE-ORDER");
     expect(JSON.stringify(body)).not.toContain("private-profile");
     expect(JSON.stringify(body)).not.toContain("private-proxy");

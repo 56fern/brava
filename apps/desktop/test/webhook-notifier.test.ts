@@ -22,7 +22,7 @@ describe("Discord webhook validation", () => {
   it("sends a green checkout embed without exposing proxy credentials", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
     vi.stubGlobal("fetch", fetchMock);
-    const task: Task = { id: "task-1", name: "Celebration Mini Tins", productUrl: "https://www.pokemoncenter.com/product/example", sku: "10-10465-176", variant: "N/A", quantity: 1, checkoutAmount: 99.9, orderNumber: "PC-123", profileId: "profile-1", proxyId: "proxy-1", status: "completed", statusMessage: "done", updatedAt: new Date().toISOString() };
+    const task: Task = { id: "task-1", mode: "default", name: "Celebration Mini Tins", productUrl: "https://www.pokemoncenter.com/-", sku: "10-10465-176", variant: "N/A", quantity: 1, checkoutAmount: 99.9, orderNumber: "PC-123", profileId: "profile-1", proxyId: "proxy-1", status: "completed", statusMessage: "done", updatedAt: new Date().toISOString() };
     const store = {
       getWebhookSettings: async () => ({ successUrl: "https://discord.com/api/webhooks/123456789/example_token", declineUrl: "", successEnabled: true, declineEnabled: true }),
       load: async () => ({
@@ -43,6 +43,8 @@ describe("Discord webhook validation", () => {
     expect(payload.embeds[0].footer.text).toBe(`Brava v${desktopVersion}`);
     expect(payload.embeds[0].title).toBe("Checked Out! 🎉");
     expect(payload.embeds[0].color).toBe(0x43d890);
+    expect(payload.embeds[0].fields).toContainEqual({ name: "Mode", value: "Default", inline: true });
+    expect(JSON.stringify(payload)).toContain("/product/10-10465-176/celebration-mini-tins");
     expect(JSON.stringify(payload)).toContain("PC-123");
     expect(JSON.stringify(payload)).toContain("https://www.pokemoncenter.com/orders");
     expect(JSON.stringify(payload)).toContain("Shipping ZIP");

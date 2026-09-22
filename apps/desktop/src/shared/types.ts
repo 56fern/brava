@@ -92,6 +92,7 @@ export type MonitorState = {
 };
 
 export type SiteId = "pokemon_center_us";
+export type TaskMode = "default";
 export type TaskGroup = {
   id: string;
   name: string;
@@ -101,6 +102,7 @@ export type TaskGroup = {
 export type Task = {
   id: string;
   groupId?: string;
+  mode?: TaskMode;
   name: string;
   productUrl: string;
   sku?: string;

@@ -19,7 +19,7 @@ describe("task builder batches", () => {
     expect(tasks).toHaveLength(10);
     expect(tasks.filter((task) => task.profileId === "profile-1")).toHaveLength(2);
     expect(tasks.filter((task) => task.profileId === "profile-5")).toHaveLength(2);
-    expect(tasks.every((task) => task.status === "idle" && task.quantity === 10 && task.effectiveQuantity === 10)).toBe(true);
+    expect(tasks.every((task) => task.mode === "default" && task.status === "idle" && task.quantity === 10 && task.effectiveQuantity === 10)).toBe(true);
     expect(tasks.map((task) => task.proxyId)).toEqual(["proxy-1", "proxy-2", "proxy-1", "proxy-2", "proxy-1", "proxy-2", "proxy-1", "proxy-2", "proxy-1", "proxy-2"]);
     expect(tasks.every((task) => task.proxyPoolIds?.join(",") === "proxy-1,proxy-2")).toBe(true);
   });

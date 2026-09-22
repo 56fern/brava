@@ -8,6 +8,7 @@ import type { CheckoutOutcome } from "./checkout-automation.js";
 import type { Harvester, HarvesterStatus, Task } from "../shared/types.js";
 import { buildCheckoutFields } from "../shared/checkout-scripts.js";
 import { parseHarvesterProxy } from "../shared/harvester-proxy.js";
+import { isPokemonCenterProductUrlForSku, resolvePokemonCenterProductUrl } from "../shared/product-input.js";
 
 const officialHosts = new Set(["pokemoncenter.com", "www.pokemoncenter.com"]);
 const harvesterIconPath = (() => {
@@ -386,10 +387,11 @@ export class HarvesterManager {
     await this.update(id, "busy", "Automatic checkout running", { assignedTaskId: task.id });
     try {
       const currentUrl = browser.webContents.getURL();
-      const onProductPage = permitsChallengeNavigation(currentUrl) && currentUrl.includes("/product/");
+      const onProductPage = permitsChallengeNavigation(currentUrl) && isPokemonCenterProductUrlForSku(currentUrl, task.sku);
       if (!onProductPage) {
-        if (!permitsChallengeNavigation(task.productUrl)) throw new Error("the task has no official product URL to open");
-        await browser.webContents.loadURL(task.productUrl);
+        const productUrl = resolvePokemonCenterProductUrl(task.productUrl, task.sku, task.name);
+        if (!permitsChallengeNavigation(productUrl)) throw new Error("the task has no official product URL to open");
+        await browser.webContents.loadURL(productUrl);
         await browser.webContents.executeJavaScript("document.readyState === 'complete' || new Promise((resolve) => addEventListener('load', resolve, { once: true }))", true).catch(() => undefined);
       }
       const outcome = await this.checkout.run(task, profile, browser.webContents);

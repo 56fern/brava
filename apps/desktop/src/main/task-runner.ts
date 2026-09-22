@@ -6,6 +6,7 @@ import { notifyTask } from "./webhook-notifier.js";
 import { publishPublicCheckout } from "./public-checkout-client.js";
 import { SharedScheduler, type SchedulerStats } from "./shared-scheduler.js";
 import { resolveCartQuantity } from "../shared/cart-quantity.js";
+import { resolvePokemonCenterProductUrl } from "../shared/product-input.js";
 const defaultQueueCheckIntervalMinutes = 3;
 const cartResultTimeoutMs = 15_000;
 const automaticCheckoutTimeoutMs = 2 * 60_000;
@@ -328,6 +329,9 @@ export class TaskRunner {
   }
 
   async handleProductSignal(signal: ProductSignal): Promise<void> {
+    const productUrl = resolvePokemonCenterProductUrl(signal.productUrl, signal.sku, signal.name);
+    if (!productUrl) return;
+    signal = { ...signal, productUrl };
     const data = await this.store.load();
     const active = data.tasks.filter((task) => ["queued", "monitoring"].includes(task.status));
     for (const task of active.filter((item) => !signal.available && item.sku?.trim().toUpperCase() === signal.sku.trim().toUpperCase())) {
@@ -376,7 +380,8 @@ export class TaskRunner {
     if (!this.checkoutHandlers) return;
     const task = await this.getTask(id);
     if (!task) return;
-    if (!productUrl) {
+    const checkoutUrl = resolvePokemonCenterProductUrl(productUrl || task.productUrl, task.sku, task.name);
+    if (!checkoutUrl) {
       await this.update(id, task.status, "Automatic checkout needs a product URL - use Review to check out manually");
       return;
     }
@@ -385,7 +390,7 @@ export class TaskRunner {
       return;
     }
     this.clear(id);
-    await this.update(id, "adding_to_cart", `${cartQuantityMessage(task)} · automatic checkout starting`, cartQuantityPatch(task, task.maxCartQuantity));
+    await this.update(id, "adding_to_cart", `${cartQuantityMessage(task)} · automatic checkout starting`, { ...cartQuantityPatch(task, task.maxCartQuantity), productUrl: checkoutUrl });
     this.scheduler.schedule(`${id}:automatic-checkout-timeout`, automaticCheckoutTimeoutMs, () => this.expireCartAttempt(id));
     await this.beginAutoCheckout(id, "");
   }

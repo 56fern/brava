@@ -26,6 +26,7 @@ export function createTaskBatch(input: TaskBatchInput, createId: () => string = 
 
   return profileIds.flatMap((profileId, profileIndex) => Array.from({ length: batchQuantity }, (_, copyIndex) => ({
     id: createId(),
+    mode: "default" as const,
     name: productInput,
     productUrl: isUrl ? productInput : "",
     sku: isUrl ? urlSku : productInput,

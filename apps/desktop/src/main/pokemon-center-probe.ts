@@ -1,6 +1,7 @@
 import { BrowserWindow } from "electron";
 import { randomUUID } from "node:crypto";
 import type { ProductSignal } from "../shared/types.js";
+import { resolvePokemonCenterProductUrl } from "../shared/product-input.js";
 
 type SearchProduct = {
   code?: unknown;
@@ -35,8 +36,9 @@ export function productSignalFromSearchProduct(product: SearchProduct, requested
   try {
     const parsed = new URL(relativeUrl, searchOrigin);
     if (parsed.origin !== searchOrigin) return null;
-    productUrl = parsed.toString();
+    productUrl = resolvePokemonCenterProductUrl(parsed.toString(), sku, name);
   } catch { return null; }
+  if (!productUrl) return null;
   const numericPrice = Number(product.purchasePrice ?? product.listPrice);
   return {
     sequence: Date.now(),

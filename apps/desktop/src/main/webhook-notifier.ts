@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppStore } from "./store.js";
 import type { Task } from "../shared/types.js";
+import { taskModeLabel } from "../shared/task-mode.js";
+import { resolvePokemonCenterProductUrl } from "../shared/product-input.js";
 
 type WebhookKind = "success" | "decline";
 type EmbedField = { name: string; value: string; inline?: boolean };
@@ -82,10 +84,11 @@ export async function notifyTask(store: AppStore, task: Task, kind: WebhookKind)
   const profile = data.profiles.find((item) => item.id === task.profileId);
   const proxy = data.proxies.find((item) => item.id === task.proxyId);
   const productLabel = task.sku && task.name !== task.sku ? `${task.sku} · ${task.name}` : task.name;
-  const productValue = task.productUrl ? `[${clean(productLabel)}](${task.productUrl})` : clean(productLabel);
+  const productUrl = resolvePokemonCenterProductUrl(task.productUrl, task.sku, task.name);
+  const productValue = productUrl ? `[${clean(productLabel)}](${productUrl})` : clean(productLabel);
   const fields: EmbedField[] = [
     { name: "Site", value: "Pokemon Center US", inline: true },
-    { name: "Mode", value: "Human checkout", inline: true },
+    { name: "Mode", value: taskModeLabel(task), inline: true },
     { name: "Product", value: productValue, inline: true },
     { name: "Size", value: clean(task.variant), inline: true },
     { name: "Price", value: task.checkoutAmount == null ? "N/A" : task.checkoutAmount.toFixed(2), inline: true },

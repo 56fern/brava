@@ -103,7 +103,7 @@ describe("TaskRunner checkout automation", () => {
   });
 
   it("starts checkout immediately without inventing a CAPTCHA request", async () => {
-    const { store, disk } = harness({ ...checkoutTask(), status: "found" });
+    const { store, disk } = harness({ ...checkoutTask(), productUrl: "https://www.pokemoncenter.com/-", status: "found" });
     const { TaskRunner } = await import("../src/main/task-runner.js");
     const runner = new TaskRunner(store, () => null);
     const request = vi.fn(async () => undefined);
@@ -111,9 +111,10 @@ describe("TaskRunner checkout automation", () => {
     const checkout = vi.fn(async () => ({ status: "completed" as const, message: "Checkout complete" }));
     runner.setCheckoutHandlers({ run: checkout });
 
-    await runner.requestAutoCheckout("test-task", checkoutTask().productUrl);
+    await runner.requestAutoCheckout("test-task", "https://www.pokemoncenter.com/-");
 
     expect(checkout).toHaveBeenCalledTimes(1);
+    expect(checkout).toHaveBeenCalledWith(expect.objectContaining({ productUrl: expect.stringContaining("/product/TEST-SKU/") }), expect.anything(), undefined);
     expect(request).not.toHaveBeenCalled();
     expect(disk().tasks[0]?.status).toBe("completed");
   });

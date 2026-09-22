@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Task } from "../shared/types.js";
+import { resolvePokemonCenterProductUrl } from "../shared/product-input.js";
 import { activeLicenseApiUrl, activeLicenseToken, serverEndpoint } from "./license-client.js";
 
 const appVersion = (() => {
@@ -21,7 +22,7 @@ export async function publishPublicCheckout(task: Task): Promise<boolean> {
       site: "pokemon_center_us",
       sku: task.sku ?? "",
       productName: task.name || task.sku || "Pokemon Center item",
-      productUrl: task.productUrl,
+      productUrl: resolvePokemonCenterProductUrl(task.productUrl, task.sku, task.name),
       quantity: task.effectiveQuantity ?? task.quantity,
       ...(task.checkoutAmount == null ? {} : { price: task.checkoutAmount }),
       clientVersion: appVersion,

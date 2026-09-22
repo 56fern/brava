@@ -21,4 +21,16 @@ describe("Pokémon Center exact-SKU probe", () => {
     const { productSignalFromSearchProduct } = await import("../src/main/pokemon-center-probe.js");
     expect(productSignalFromSearchProduct({ code: "70-10608", name: "Related item", url: "/product/70-10608/related", outOfStock: false }, "10-10608-101")).toBeNull();
   });
+
+  it("repairs an incomplete search-result URL with the exact SKU route", async () => {
+    const { productSignalFromSearchProduct } = await import("../src/main/pokemon-center-probe.js");
+    const signal = productSignalFromSearchProduct({
+      code: "10-10608-101",
+      name: "Pokémon TCG: Pokémon 30th Celebration Card Sleeves",
+      url: "/-",
+      outOfStock: false,
+    }, "10-10608-101");
+
+    expect(signal?.productUrl).toBe("https://www.pokemoncenter.com/product/10-10608-101/pokemon-tcg-pokemon-30th-celebration-card-sleeves");
+  });
 });
