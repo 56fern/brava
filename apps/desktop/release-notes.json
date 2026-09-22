@@ -1,20 +1,12 @@
 {
-  "version": "0.52.0",
-  "title": "New Update Available",
+  "version": "0.52.1",
+  "title": "Checkout Reliability Update",
   "sections": [
     {
-      "name": "License connection",
+      "name": "Checkout",
       "items": [
-        "Packaged Brava builds now connect to the live license server instead of localhost.",
-        "Activation failures caused by an unreachable server now show a short, useful message."
-      ]
-    },
-    {
-      "name": "Updates",
-      "items": [
-        "Brava now checks the hosted production update feed.",
-        "Missing or unavailable updates no longer expose internal error details in Settings.",
-        "Older installations can download the complete newest installer in one update."
+        "Tasks now continue automatically after the CAPTCHA is completed.",
+        "Automatic checkout is always enabled, including for tasks created by older versions."
       ]
     }
   ],
