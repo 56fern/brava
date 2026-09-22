@@ -1,13 +1,13 @@
 {
-  "version": "0.52.5",
-  "title": "Complete Guest Checkout Flow",
+  "version": "0.52.6",
+  "title": "Shipping Name Autofill Fix",
   "sections": [
     {
       "name": "Checkout",
       "items": [
-        "After adding an item, Brava now opens the cart and selects Guest Checkout.",
-        "Shipping and payment details are filled from the assigned profile on their correct pages.",
-        "Brava continues through shipping, payment, review, and Place Order in sequence."
+        "First Name and Last Name are now matched to their visible checkout labels.",
+        "Each profile field is assigned to a unique input so one name cannot overwrite the other.",
+        "The complete guest checkout flow continues through shipping, payment, review, and Place Order."
       ]
     },
     {
