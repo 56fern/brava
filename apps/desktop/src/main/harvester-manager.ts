@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import type { AppStore } from "./store.js";
 import { CheckoutAutomation } from "./checkout-automation.js";
 import type { CheckoutOutcome } from "./checkout-automation.js";
+import type { CartDebugRunOptions } from "./cart-debug.js";
+import { permitsCartDebugUrl } from "../shared/cart-debug.js";
 import type { Harvester, HarvesterStatus, Task } from "../shared/types.js";
 import { buildCaptchaDetectionScript, buildCheckoutFields } from "../shared/checkout-scripts.js";
 import { parseHarvesterProxy } from "../shared/harvester-proxy.js";
@@ -108,6 +110,7 @@ export class HarvesterManager {
   private readonly solveWatchers = new Map<string, NodeJS.Timeout>();
   private readonly insertedCss = new Map<string, string>();
   private readonly activeCheckouts = new Set<string>();
+  private readonly cartTests = new Set<string>();
   private closingAll = false;
   private onAvailable: ((id: string) => void | Promise<void>) | undefined;
   private onClosed: ((id: string, redistribute: boolean) => void | Promise<void>) | undefined;
@@ -314,7 +317,11 @@ export class HarvesterManager {
     }
 
     browser.webContents.on("will-navigate", (event, url) => {
+      if (this.cartTests.has(id) && !permitsCartDebugUrl(url)) { event.preventDefault(); return; }
       if (!url.startsWith("data:text/html") && !(this.activeCheckouts.has(id) ? permitsStoreNavigation(url) : permitsChallengeNavigation(url))) event.preventDefault();
+    });
+    browser.webContents.on("will-redirect", (event, url) => {
+      if (this.cartTests.has(id) && !permitsCartDebugUrl(url)) event.preventDefault();
     });
     browser.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     browser.webContents.on("page-title-updated", (event) => {
@@ -493,7 +500,7 @@ export class HarvesterManager {
     }
   }
 
-  async runCheckoutOnAvailable(task: Task, profile: Parameters<typeof buildCheckoutFields>[0], signal?: AbortSignal): Promise<CheckoutOutcome> {
+  async runCheckoutOnAvailable(task: Task, profile: Parameters<typeof buildCheckoutFields>[0], signal?: AbortSignal, test?: CartDebugRunOptions): Promise<CheckoutOutcome> {
     const data = await this.store.load();
     const harvester = data.harvesters.find((item) => item.status !== "busy" && item.status !== "error" && !item.assignedRequestId && !item.assignedTaskId);
     if (!harvester) {
@@ -507,7 +514,7 @@ export class HarvesterManager {
       await this.update(harvester.id, "error", "Could not clear the previous cart", { assignedTaskId: undefined });
       return { status: "declined", message: `Checkout did not start because the previous cart could not be cleared: ${error instanceof Error ? error.message : "unknown error"}. Nothing was ordered.` };
     }
-    const outcome = await this.runCheckout(harvester.id, task, profile, signal);
+    const outcome = await this.runCheckout(harvester.id, task, profile, signal, test);
     return outcome.status === "captcha" ? { ...outcome, harvesterId: harvester.id } : outcome;
   }
 
@@ -515,21 +522,26 @@ export class HarvesterManager {
    * Hands-free checkout in the hidden harvester session. The window becomes
    * visible only if a real CAPTCHA needs manual intervention.
    */
-  async runCheckout(id: string, task: Task, profile: Parameters<typeof buildCheckoutFields>[0], signal?: AbortSignal): Promise<CheckoutOutcome> {
+  async runCheckout(id: string, task: Task, profile: Parameters<typeof buildCheckoutFields>[0], signal?: AbortSignal, test?: CartDebugRunOptions): Promise<CheckoutOutcome> {
     const browser = this.windows.get(id);
     if (!browser || browser.isDestroyed()) {
       return { status: "declined", message: "The harvester window closed before checkout could start; restart the task to retry." };
     }
-    if (signal?.aborted) return { status: "cancelled", message: "Checkout stopped by user" };
+    if (signal?.aborted) {
+      await this.release(id, "Checkout stopped");
+      return { status: "cancelled", message: "Checkout stopped by user" };
+    }
     this.clearSolveWatcher(id);
     browser.hide();
     await this.clearChallengeCss(id, browser);
     this.activeCheckouts.add(id);
+    if (test) this.cartTests.add(id);
     await this.update(id, "busy", "Automatic checkout running", { assignedTaskId: task.id });
     const stopNavigation = () => { if (!browser.isDestroyed()) browser.webContents.stop(); };
     signal?.addEventListener("abort", stopNavigation, { once: true });
     let outcome: CheckoutOutcome;
     try {
+      test?.ready(browser.webContents);
       const currentUrl = browser.webContents.getURL();
       const onProductPage = permitsChallengeNavigation(currentUrl) && isPokemonCenterProductUrlForSku(currentUrl, task.sku);
       if (!onProductPage) {
@@ -540,7 +552,11 @@ export class HarvesterManager {
         if (signal?.aborted) throw new DOMException("Checkout stopped by user", "AbortError");
         await browser.webContents.executeJavaScript("document.readyState === 'complete' || new Promise((resolve) => addEventListener('load', resolve, { once: true }))", true).catch(() => undefined);
       }
-      outcome = await this.checkout.run(task, profile, browser.webContents, signal, () => this.onSubmittingOrder?.(task.id) ?? Promise.resolve(), () => this.onCarted?.(task.id) ?? Promise.resolve());
+      outcome = await this.checkout.run(task, profile, browser.webContents, signal, test ? undefined : () => this.onSubmittingOrder?.(task.id) ?? Promise.resolve(), test ? undefined : () => this.onCarted?.(task.id) ?? Promise.resolve(), test);
+      if (test) {
+        await test.checkpoint("Final test view");
+        if (outcome.status === "captcha") outcome = { status: "cancelled", message: "Cart test stopped at a CAPTCHA. No checkout was attempted." };
+      }
     } catch (error) {
       outcome = signal?.aborted || (error instanceof DOMException && error.name === "AbortError")
         ? { status: "cancelled", message: "Checkout stopped by user" }
@@ -548,6 +564,7 @@ export class HarvesterManager {
     } finally {
       signal?.removeEventListener("abort", stopNavigation);
       this.activeCheckouts.delete(id);
+      this.cartTests.delete(id);
     }
     const assigned = this.assignedChallengeUrls.get(id);
     await this.update(id, browser.isDestroyed() ? "closed" : "open", outcome.status === "completed" ? `Checkout complete · ${outcome.message}` : outcome.status === "captcha" ? "CAPTCHA detected · waiting for the user" : outcome.status === "cancelled" ? "Checkout stopped" : "Checkout ended · check task logs", { assignedRequestId: undefined, assignedTaskId: undefined });

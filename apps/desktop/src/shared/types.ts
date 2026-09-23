@@ -1,3 +1,5 @@
+import type { CartDebugState } from "./cart-debug.js";
+
 export type Profile = {
   id: string;
   groupId?: string;
@@ -224,6 +226,9 @@ export type BravaApi = {
     testMany: (proxyIds: string[], target: ProxyTestTarget) => Promise<ProxyTestResult[]>;
   };
   tasks: {
+    cartDebugState: () => Promise<CartDebugState>;
+    startCartDebug: (taskId: string) => Promise<CartDebugState>;
+    stopCartDebug: (clear?: boolean) => Promise<CartDebugState>;
     start: (taskId: string) => Promise<void>;
     startMany: (taskIds: string[]) => Promise<void>;
     stop: (taskId: string) => Promise<void>;

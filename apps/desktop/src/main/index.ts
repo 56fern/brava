@@ -7,6 +7,7 @@ import { AppStore } from "./store.js";
 import { TaskRunner } from "./task-runner.js";
 import { HarvesterManager } from "./harvester-manager.js";
 import { CheckoutAutomation } from "./checkout-automation.js";
+import { CartDebugController } from "./cart-debug.js";
 import { ChallengeBroker } from "./challenge-broker.js";
 import { activate, deactivate, heartbeat, resume } from "./license-client.js";
 import { UpdateController } from "./updater.js";
@@ -87,6 +88,7 @@ if (!hasSingleInstanceLock) {
   runner.setProductProbe((sku) => productProbe.lookup(sku));
   await runner.recover();
   const harvesters = new HarvesterManager(store, () => mainWindow);
+  const cartDebug = new CartDebugController();
   const challenges = new ChallengeBroker(store, () => mainWindow, harvesters, {
     testMode: !app.isPackaged && process.env.BRAVA_CHALLENGE_TEST_MODE === "1",
     checkoutHandoff: (taskId, harvesterId) =>
@@ -112,7 +114,7 @@ if (!hasSingleInstanceLock) {
     event.preventDefault();
     challenges.shutdown();
     productProbe.close();
-    void runner.shutdown().finally(() => app.quit());
+    void Promise.all([runner.shutdown(), cartDebug.stop(true)]).finally(() => app.quit());
   });
   ipcMain.handle("clipboard:write-text", (_event, value: string) => {
     if (typeof value !== "string" || value.length > 10_000) throw new Error("Invalid clipboard value.");
@@ -190,8 +192,29 @@ if (!hasSingleInstanceLock) {
     const proxies = (await store.load()).proxies.filter((proxy) => requested.has(proxy.id));
     return testProxies(proxies, { target: proxyTestTargetUrl(target) });
   });
-  ipcMain.handle("task:start", (_event, id: string) => runner.start(id));
-  ipcMain.handle("task:start-many", (_event, ids: string[]) => runner.startMany(ids));
+  let cartDebugStarting = false;
+  let cartDebugGeneration = 0;
+  const assertNoCartTest = () => { if (cartDebugStarting || cartDebug.state().running) throw new Error("Stop the cart-only test before starting tasks."); };
+  ipcMain.handle("task:start", (_event, id: string) => { assertNoCartTest(); return runner.start(id); });
+  ipcMain.handle("task:start-many", (_event, ids: string[]) => { assertNoCartTest(); return runner.startMany(ids); });
+  ipcMain.handle("task:cart-debug-state", () => cartDebug.state());
+  ipcMain.handle("task:cart-debug-stop", (_event, clear: boolean) => { cartDebugGeneration += 1; return cartDebug.stop(clear === true); });
+  ipcMain.handle("task:cart-debug-start", async (_event, id: string) => {
+    assertNoCartTest();
+    cartDebugStarting = true;
+    const generation = ++cartDebugGeneration;
+    try {
+      const data = await store.load();
+      if (generation !== cartDebugGeneration || !mainWindow || mainWindow.isDestroyed()) return cartDebug.state();
+      const task = data.tasks.find((item) => item.id === id);
+      if (!task || task.usePlaceholder || !task.sku?.trim()) throw new Error("Choose a task with a product SKU first.");
+      if (data.tasks.some((item) => !["idle", "stopped", "completed", "declined", "error"].includes(item.status))) throw new Error("Stop running tasks before starting the cart-only test.");
+      // No profile decryption, normal task lifecycle, checkout callbacks, or webhooks.
+      const testTask = { ...task, checkoutStage: "product" as const, cartedAt: undefined, effectiveQuantity: task.quantity };
+      const blankProfile = { id: "debug", name: "", email: "", firstName: "", lastName: "", address1: "", address2: "", city: "", region: "", postalCode: "", country: "", phone: "" };
+      return cartDebug.start(id, (signal, options) => harvesters.runCheckoutOnAvailable(testTask, blankProfile, signal, options));
+    } finally { cartDebugStarting = false; }
+  });
   ipcMain.handle("task:stop", (_event, id: string) => runner.stop(id));
   ipcMain.handle("task:stop-many", (_event, ids: string[]) => runner.stopMany(ids));
   ipcMain.handle("task:review", (_event, id: string) => runner.review(id));
@@ -219,6 +242,7 @@ if (!hasSingleInstanceLock) {
   createWindow();
   mainWindow?.once("closed", () => {
     mainWindow = null;
+    void cartDebug.stop(true);
     void harvesters.closeAll();
   });
   mainWindow?.webContents.once("did-finish-load", () => {

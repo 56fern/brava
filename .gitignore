@@ -10,3 +10,4 @@ apps/desktop/release-*/
 apps/desktop/out/
 work/
 outputs/
+apps/desktop/.debug-smoke/

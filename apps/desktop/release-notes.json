@@ -1,14 +1,14 @@
 {
-  "version": "0.52.17",
-  "title": "Live Cart Progress and Faster Transitions",
+  "version": "0.52.18",
+  "title": "Hidden Browser Cart Debug Viewer",
   "sections": [
     {
-      "name": "Checkout",
+      "name": "Diagnostics",
       "items": [
-        "Confirmed carts now immediately update the Carted count. Click the cart icon to see those tasks while checkout, CAPTCHA handling, or order submission continues.",
-        "Carted tasks leave the cart filter when completed, declined, or stopped. A fresh task start resets its previous cart progress.",
-        "Ready pages advance with faster checks and no fixed cart-opening delay, while keeping the same wait limits for slow storefront responses.",
-        "Opening the cart no longer risks clicking Add to Cart again. Disabled Place Order controls are not reported as submitted."
+        "Open task logs and select Cart-only debug to watch screenshots from the actual hidden browser, separate from the CAPTCHA harvester.",
+        "Run a fresh-session product-to-cart test with live previews and before/after Add to Cart snapshots. Test runs stop before checkout and do not use profile or payment details.",
+        "Stop or close the viewer to cancel the test. Snapshots stay in memory and are cleared when the viewer closes; checkout and account pages are excluded.",
+        "Cart navigation ignores combined checkout controls, and hidden captures refresh their rendered frame without opening a browser window."
       ]
     }
   ],

@@ -43,6 +43,9 @@ const api: BravaApi = {
     testMany: (ids, target) => ipcRenderer.invoke("proxy:test-many", ids, target),
   },
   tasks: {
+    cartDebugState: () => ipcRenderer.invoke("task:cart-debug-state"),
+    startCartDebug: (id) => ipcRenderer.invoke("task:cart-debug-start", id),
+    stopCartDebug: (clear) => ipcRenderer.invoke("task:cart-debug-stop", clear),
     start: (id) => ipcRenderer.invoke("task:start", id),
     startMany: (ids) => ipcRenderer.invoke("task:start-many", ids),
     stop: (id) => ipcRenderer.invoke("task:stop", id),

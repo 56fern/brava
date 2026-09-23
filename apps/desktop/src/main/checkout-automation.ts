@@ -46,6 +46,10 @@ const pollAttempts = 120;
 const pollIntervalMs = 100;
 const requiredPaymentLabels = ["Card number", "Card expiry month", "Card expiry year", "Security code"];
 type ClickResult = { clicked?: boolean; candidates?: unknown } | null;
+export type CartTestOptions = {
+  cartOnly: true;
+  checkpoint: (label: string) => Promise<void>;
+};
 
 /**
  * Drives a harvester window through add-to-cart and checkout without any user
@@ -148,8 +152,9 @@ export class CheckoutAutomation {
   }
 
   /** Runs the full automatic checkout in the caller-supplied webContents. */
-  async run(task: Task, profile: Parameters<typeof buildShippingFields>[0], webContents: CheckoutWebContents, signal?: AbortSignal, onSubmittingOrder?: () => Promise<void>, onCarted?: () => Promise<void>): Promise<CheckoutOutcome> {
+  async run(task: Task, profile: Parameters<typeof buildShippingFields>[0], webContents: CheckoutWebContents, signal?: AbortSignal, onSubmittingOrder?: () => Promise<void>, onCarted?: () => Promise<void>, test?: CartTestOptions): Promise<CheckoutOutcome> {
     this.assertRunning(signal);
+    if (test && task.checkoutStage && task.checkoutStage !== "product") return { status: "cancelled", message: "Cart-only test must start on the product page. Checkout was not attempted." };
     let cartReported = Boolean(task.cartedAt);
     const reportCarted = async () => {
       this.assertRunning(signal);
@@ -158,7 +163,7 @@ export class CheckoutAutomation {
       await onCarted?.();
     };
     const alreadyConfirmed = parseOrderConfirmation({ url: webContents.getURL(), title: webContents.getTitle(), bodyText: "" });
-    if (alreadyConfirmed.confirmed) {
+    if (!test && alreadyConfirmed.confirmed) {
       const existingConfirmation = await this.confirmation(webContents, signal);
       if (existingConfirmation) return existingConfirmation;
     }
@@ -166,6 +171,7 @@ export class CheckoutAutomation {
     if (["shipping", "payment", "review", "confirmation"].includes(stage)) await reportCarted();
 
     if (stage === "product") {
+      await test?.checkpoint("Before Add to Cart");
       const initialCaptcha = await this.captcha(webContents, "product", signal);
       if (initialCaptcha) return initialCaptcha;
       if (task.variant.trim() || task.effectiveQuantity !== undefined) {
@@ -178,7 +184,7 @@ export class CheckoutAutomation {
         const captcha = await this.captcha(webContents, "product", signal);
         if (captcha) return captcha;
         const cart = (await webContents.executeJavaScript(buildAddToCartScript(), true)) as ClickResult;
-        if (cart?.clicked) { cartClicked = true; stage = "cart"; break; }
+        if (cart?.clicked) { cartClicked = true; stage = "cart"; await test?.checkpoint("Add to Cart clicked"); break; }
         await this.wait(pollIntervalMs, signal);
       }
       if (!cartClicked) return { status: "declined", message: `Add to Cart did not appear after waiting on ${this.pageContext(webContents)}. Nothing was ordered.` };
@@ -209,6 +215,33 @@ export class CheckoutAutomation {
         const siteErrors = await this.siteErrors(webContents, signal);
         if (siteErrors.length) return { status: "declined", message: `Pokémon Center did not confirm the Add to Cart click on ${this.pageContext(webContents)}. Site error: ${siteErrors.join(" | ")}. Checkout was not attempted.` };
       }
+      await test?.checkpoint(cartAcknowledged ? "Cart response received" : "No cart confirmation yet");
+    }
+
+    // Hard boundary: diagnostic runs never execute guest checkout, profile
+    // filling, payment selection, or Place Order (even after an unexpected redirect).
+    if (test) {
+      let emptyChecks = 0;
+      for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
+        this.assertRunning(signal);
+        const current = await this.pageState(webContents, signal);
+        if (["guest", "shipping", "payment", "review", "confirmation"].includes(current)) return { status: "cancelled", message: "Cart-only safety stop: the site advanced beyond the cart. No checkout controls were clicked." };
+        const challenge = await this.captcha(webContents, "cart", signal);
+        if (challenge) return { status: "cancelled", message: "Cart test stopped at a CAPTCHA. No checkout was attempted." };
+        if (current === "cart") {
+          const cart = await webContents.executeJavaScript(buildCartDiagnosticsScript(), true) as { empty?: boolean; controls?: string[] } | null;
+          emptyChecks = cart?.empty ? emptyChecks + 1 : 0;
+          if (emptyChecks >= 30 || (!cart?.empty && cart?.controls?.length)) {
+            await test.checkpoint(cart?.empty ? "Cart is empty" : "Cart page — test stopped");
+            return { status: "cancelled", message: cart?.empty ? "The store reports an empty cart after Add to Cart. Test stopped; checkout was not attempted." : "Cart page reached. Test stopped before checkout; nothing was ordered." };
+          }
+        } else {
+          await webContents.executeJavaScript(buildOpenCartScript(attempt >= 2), true);
+        }
+        await this.wait(pollIntervalMs, signal);
+      }
+      await test.checkpoint("Cart test timed out");
+      return { status: "cancelled", message: "Cart test timed out. Inspect the snapshots; checkout was not attempted." };
     }
 
     if (stage === "cart" || stage === "guest") {

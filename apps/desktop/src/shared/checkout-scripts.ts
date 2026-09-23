@@ -318,6 +318,7 @@ export function buildOpenCartScript(allowDirectNavigation = false): string {
     const text = [element.textContent, element.getAttribute('aria-label'), element.getAttribute('title')].filter(Boolean).join(' ').replace(/\\s+/g, ' ').trim().toLowerCase();
     const href = (element.getAttribute('href') || '').toLowerCase();
     if (/add to (?:cart|bag|basket)/.test(text)) return false;
+    if (/checkout|check out|place order|submit order/.test(text + ' ' + href)) return false;
     return href.includes('/cart') || href.includes('/bag') || ['view cart', 'go to cart', 'shopping cart', 'my cart', 'cart'].some((pattern) => text === pattern || text.includes(pattern));
   });
   if (match) {

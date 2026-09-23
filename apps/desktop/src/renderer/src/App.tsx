@@ -13,6 +13,7 @@ import { harvesterProxyLabel, parseHarvesterProxy } from "../../shared/harvester
 import bravaLogoUrl from "./assets/brava-logo-v2.png";
 import bravaLogoLightUrl from "./assets/brava-logo-light.png";
 import { API_URL } from "./config.js";
+import { CartDebugModal } from "./CartDebugModal";
 
 const ORDER_STATUS_URL = "https://www.pokemoncenter.com/orders";
 const emptyData: AppData = { profileGroups: [], proxyGroups: [], profiles: [], proxies: [], taskGroups: [], tasks: [], harvesters: [] };
@@ -565,8 +566,10 @@ function TaskEditOptions({ form, onChange, profileGroups, profiles, proxyGroups,
 }
 
 function TaskLogsModal({ task, onClose }: { task: Task; onClose: () => void }) {
+  const [debug, setDebug] = useState(false);
+  if (debug) return <CartDebugModal task={task} onClose={() => setDebug(false)} />;
   const events = (task.history?.length ? [...task.history] : [{ status: task.status, message: task.statusMessage || "No status message", at: task.updatedAt }]).reverse();
-  return createPortal(<div className="modal-backdrop task-log-backdrop" onMouseDown={onClose}><section className="task-log-modal" role="dialog" aria-modal="true" aria-label={`Task logs for ${task.name}`} onMouseDown={(event) => event.stopPropagation()}><header><div className="task-builder-title"><div className="task-builder-icon"><Activity size={18} /></div><div><span className="eyebrow">TASK LOGS</span><h2>{task.name}</h2><p>{task.sku || "No SKU"} &middot; {events.length} recorded {events.length === 1 ? "event" : "events"}</p></div></div><button type="button" aria-label="Close task logs" onClick={onClose}><X size={18} /></button></header><div className="task-log-current"><div><span>Current status</span><b>{taskStatusLabel[task.status]}</b></div><p>{task.statusMessage || "No current status message"}</p></div><div className="task-log-list">{events.map((event, index) => <article className="task-log-row" key={`${event.at}-${index}`}><span className={`task-log-dot ${event.status}`} /><div><div><b>{taskStatusLabel[event.status]}</b><time>{new Date(event.at).toLocaleString()}</time></div><p>{event.message}</p></div></article>)}</div><footer><span>Logs shown only for this task</span><button type="button" className="primary" onClick={onClose}>Close</button></footer></section></div>, document.body);
+  return createPortal(<div className="modal-backdrop task-log-backdrop" onMouseDown={onClose}><section className="task-log-modal" role="dialog" aria-modal="true" aria-label={`Task logs for ${task.name}`} onMouseDown={(event) => event.stopPropagation()}><header><div className="task-builder-title"><div className="task-builder-icon"><Activity size={18} /></div><div><span className="eyebrow">TASK LOGS</span><h2>{task.name}</h2><p>{task.sku || "No SKU"} &middot; {events.length} recorded {events.length === 1 ? "event" : "events"}</p></div></div><button type="button" aria-label="Close task logs" onClick={onClose}><X size={18} /></button></header><div className="task-log-current"><div><span>Current status</span><b>{taskStatusLabel[task.status]}</b></div><p>{task.statusMessage || "No current status message"}</p></div><div className="task-log-list">{events.map((event, index) => <article className="task-log-row" key={`${event.at}-${index}`}><span className={`task-log-dot ${event.status}`} /><div><div><b>{taskStatusLabel[event.status]}</b><time>{new Date(event.at).toLocaleString()}</time></div><p>{event.message}</p></div></article>)}</div><footer><button type="button" onClick={() => setDebug(true)}><Eye size={14} /> Cart-only debug</button><button type="button" className="primary" onClick={onClose}>Close</button></footer></section></div>, document.body);
 }
 
 function queueDisplay(task: Task, now: number): { primary: string; secondary: string; title: string } {
