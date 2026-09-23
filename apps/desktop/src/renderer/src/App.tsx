@@ -486,10 +486,10 @@ function TaskTableRowContent({ task, profileGroups, proxyGroups, profiles, proxi
     <div className="table-actions">
       {task.pendingMonitorSignal && <button className="monitor-match-action" title={`Apply monitor match ${task.pendingMonitorSignal.sku}`} onClick={() => void window.brava.tasks.applyMonitorSignal(task.id)}><Radio size={14} /></button>}
       {idle ? <button title="Start" onClick={() => void window.brava.tasks.start(task.id)}><Play size={14} /></button> : <button title="Stop" onClick={() => void window.brava.tasks.stop(task.id)}><Square size={13} /></button>}
-      {["awaiting_user", "carted"].includes(task.status) && <button className="review" title="Open in harvester" onClick={() => void window.brava.tasks.review(task.id)}><ExternalLink size={14} /></button>}
+      {(task.status === "awaiting_user" || (task.status === "carted" && !task.checkoutStage)) && <button className="review" title="Open in harvester" onClick={() => void window.brava.tasks.review(task.id)}><ExternalLink size={14} /></button>}
       {task.status === "awaiting_user" && <button title="Mark carted" onClick={() => void window.brava.tasks.markCarted(task.id)}><ShoppingCart size={14} /></button>}
       {task.status === "carted" && !task.checkoutStage && <button title="Confirm successful checkout" onClick={() => void window.brava.tasks.complete(task.id)}><Check size={14} /></button>}
-      {["awaiting_user", "carted"].includes(task.status) && <button title="Mark declined" onClick={() => void window.brava.tasks.decline(task.id)}><X size={14} /></button>}
+      {(task.status === "awaiting_user" || (task.status === "carted" && !task.checkoutStage)) && <button title="Mark declined" onClick={() => void window.brava.tasks.decline(task.id)}><X size={14} /></button>}
       {task.status === "declined" && task.offerProfileFallback && profiles.length > 1 && <button title="Select next profile manually" onClick={onNextProfile}><RotateCcw size={14} /></button>}
       <button title="Delete" onClick={onDelete}><Trash2 size={14} /></button>
     </div>
